@@ -1,0 +1,123 @@
+-- SERVICES
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+
+-- TOGGLE VARIABLE
+local scriptEnabled = true
+
+-- PLAYER VARIABLES
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 1. PERSPECTIVE & AUDIO
+local function setupCharacter(char)
+    local hum = char:WaitForChild("Humanoid")
+    hum.CameraOffset = scriptEnabled and Vector3.new(0, 0.5, -1.5) or Vector3.new(0, 0, 0)
+end
+if player.Character then setupCharacter(player.Character) end
+player.CharacterAdded:Connect(setupCharacter)
+
+local lowPass = Instance.new("EqualizerSoundEffect", SoundService)
+lowPass.HighGain = -55; lowPass.MidGain = -20; lowPass.LowGain = 8
+lowPass.Enabled = scriptEnabled
+
+-- 2. SHADERS
+local cc = Instance.new("ColorCorrectionEffect", Lighting)
+cc.Contrast = 0.7; cc.Saturation = -0.25; cc.Enabled = scriptEnabled
+
+local waterBlur = Instance.new("BlurEffect", Lighting)
+local waterDOF = Instance.new("DepthOfFieldEffect", Lighting)
+local waterCC = Instance.new("ColorCorrectionEffect", Lighting)
+waterCC.TintColor = Color3.fromRGB(120, 140, 135)
+
+-- 3. FLASHLIGHT
+local lightPart = Instance.new("Part")
+lightPart.Transparency = 1; lightPart.CanCollide = false; lightPart.Anchored = true; lightPart.Parent = workspace
+local fl = Instance.new("SpotLight", lightPart)
+fl.Brightness = 3.5; fl.Range = 70; fl.Enabled = false
+
+-- 4. GUI HANDLING
+local originalStates = {}
+local function setGuisVisible(visible)
+    for _, gui in pairs(playerGui:GetDescendants()) do
+        if gui:IsA("GuiObject") then
+            if not visible then -- Hiding
+                if not originalStates[gui] then
+                    originalStates[gui] = {
+                        bg = gui.BackgroundTransparency, 
+                        text = (gui:IsA("TextLabel") or gui:IsA("TextButton") or gui:IsA("TextBox")) and gui.TextTransparency or nil, 
+                        img = (gui:IsA("ImageLabel") or gui:IsA("ImageButton")) and gui.ImageTransparency or nil
+                    }
+                end
+                gui.BackgroundTransparency = 1
+                if originalStates[gui].text then gui.TextTransparency = 1 end
+                if originalStates[gui].img then gui.ImageTransparency = 1 end
+            elseif originalStates[gui] then -- Restoring
+                local s = originalStates[gui]
+                gui.BackgroundTransparency = s.bg
+                if s.text then gui.TextTransparency = s.text end
+                if s.img then gui.ImageTransparency = s.img end
+                originalStates[gui] = nil
+            end
+        end
+    end
+end
+
+-- 5. COMMANDS (!DS to Disable, !EN to Enable)
+player.Chatted:Connect(function(msg)
+    local lowMsg = msg:lower()
+    
+    if lowMsg == "!ds" then -- DISABLE EVERYTHING
+        scriptEnabled = false
+        cc.Enabled = false
+        lowPass.Enabled = false
+        fl.Enabled = false
+        waterBlur.Enabled = false
+        waterDOF.Enabled = false
+        waterCC.Enabled = false
+        setGuisVisible(true) -- Restore GUIs
+        if player.Character then setupCharacter(player.Character) end -- Reset Camera
+        
+    elseif lowMsg == "!en" then -- ENABLE EVERYTHING
+        scriptEnabled = true
+        cc.Enabled = true
+        lowPass.Enabled = true
+        if player.Character then setupCharacter(player.Character) end -- Re-apply Camera Offset
+
+    elseif scriptEnabled then -- Sub-commands only work if script is on
+        if lowMsg == "!fl" then fl.Enabled = not fl.Enabled
+        elseif lowMsg == "!rg" then
+            local currentlyHidden = (next(originalStates) ~= nil)
+            setGuisVisible(currentlyHidden)
+        end
+    end
+end)
+
+-- 6. CORE LOOP
+RunService.RenderStepped:Connect(function()
+    if not scriptEnabled then return end
+    
+    lightPart.CFrame = lightPart.CFrame:Lerp(camera.CFrame, 0.08)
+
+    -- Underwater Logic
+    local pos = camera.CFrame.Position
+    local min, max = pos - Vector3.new(1,1,1), pos + Vector3.new(1,1,1)
+    local region = Region3.new(min, max):ExpandToGrid(4)
+    local material = workspace.Terrain:ReadVoxels(region, 4)
+    local isUnderwater = (material[1][1][1] == Enum.Material.Water)
+
+    waterBlur.Enabled = isUnderwater; waterBlur.Size = isUnderwater and 8 or 0
+    waterDOF.Enabled = isUnderwater; waterCC.Enabled = isUnderwater
+
+    -- Bobbing
+    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        local velocity = player.Character.HumanoidRootPart.Velocity.Magnitude
+        if velocity > 0.1 then
+            local bob = math.sin(tick() * 6.5) * (velocity / 40)
+            camera.CFrame = camera.CFrame * CFrame.new(0, bob, 0) * CFrame.Angles(0, 0, math.rad(bob * 2.5))
+        end
+    end
+end)
