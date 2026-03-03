@@ -1,0 +1,120 @@
+-- SERVICES
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+
+-- PLAYER VARIABLES
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 1. PERSPECTIVE & AUDIO
+local function setupCharacter(char)
+    local hum = char:WaitForChild("Humanoid")
+    hum.CameraOffset = Vector3.new(0, 0.5, -1.5)
+end
+if player.Character then setupCharacter(player.Character) end
+player.CharacterAdded:Connect(setupCharacter)
+
+local lowPass = Instance.new("EqualizerSoundEffect", SoundService)
+lowPass.HighGain = -55; lowPass.MidGain = -20; lowPass.LowGain = 8
+
+-- 2. SHADERS & REALISTIC UNDERWATER
+Lighting.Technology = Enum.Technology.Future
+local cc = Instance.new("ColorCorrectionEffect", Lighting)
+cc.Contrast = 0.7; cc.Saturation = -0.25
+
+-- Murky Water Filter
+local waterBlur = Instance.new("BlurEffect", Lighting)
+waterBlur.Size = 0
+waterBlur.Enabled = false
+
+local waterDOF = Instance.new("DepthOfFieldEffect", Lighting) -- For distance blur
+waterDOF.FocusDistance = 5
+waterDOF.InFocusRadius = 10
+waterDOF.Enabled = false
+
+local waterCC = Instance.new("ColorCorrectionEffect", Lighting)
+waterCC.TintColor = Color3.fromRGB(120, 140, 135) -- Murky Teal/Grey (More Realistic)
+waterCC.Brightness = -0.15
+waterCC.Saturation = -0.4
+waterCC.Enabled = false
+
+-- 3. DARKENED FLASHLIGHT (Gritty Look)
+local lightPart = Instance.new("Part")
+lightPart.Transparency = 1; lightPart.CanCollide = false; lightPart.Anchored = true; lightPart.Parent = workspace
+
+local fl = Instance.new("SpotLight", lightPart)
+fl.Brightness = 3.5 -- Lowered from 5
+fl.Range = 70      -- Shortened range
+fl.Angle = 70      -- Tighter beam
+fl.Color = Color3.fromRGB(255, 245, 200) -- Slightly warm/yellow tint
+fl.Shadows = true
+fl.Enabled = false
+
+-- 4. PERMANENT HIDE FUNCTION
+local function killLabels()
+    pcall(function()
+        local crouch = playerGui.Main.Controls.Mobile.Basecontrols.Crouch.Textlabel
+        crouch.Visible = false; crouch.TextTransparency = 1
+        local health = playerGui.Main.Health.TextLabel
+        health.Visible = false; health.TextTransparency = 1
+    end)
+end
+
+-- 5. COMMANDS (!FL AND !RG)
+local guiHidden = false
+local originalStates = {}
+
+player.Chatted:Connect(function(msg)
+    local lowMsg = msg:lower()
+    if lowMsg == "!fl" then fl.Enabled = not fl.Enabled
+    elseif lowMsg == "!rg" then
+        guiHidden = not guiHidden
+        for _, gui in pairs(playerGui:GetDescendants()) do
+            if gui:IsA("GuiObject") then
+                if guiHidden then
+                    originalStates[gui] = {bg = gui.BackgroundTransparency, text = (gui:IsA("TextLabel") or gui:IsA("TextButton") or gui:IsA("TextBox")) and gui.TextTransparency or nil, img = (gui:IsA("ImageLabel") or gui:IsA("ImageButton")) and gui.ImageTransparency or nil}
+                    gui.BackgroundTransparency = 1
+                    if originalStates[gui].text then gui.TextTransparency = 1 end
+                    if originalStates[gui].img then gui.ImageTransparency = 1 end
+                elseif originalStates[gui] then
+                    local s = originalStates[gui]
+                    gui.BackgroundTransparency = s.bg
+                    if s.text then gui.TextTransparency = s.text end
+                    if s.img then gui.ImageTransparency = s.img end
+                end
+            end
+        end
+    end
+end)
+
+-- 6. CORE LOOP
+RunService.RenderStepped:Connect(function()
+    killLabels()
+    lightPart.CFrame = lightPart.CFrame:Lerp(camera.CFrame, 0.08)
+
+    -- Detect if Camera is in Water
+    local pos = camera.CFrame.Position
+    local min = Vector3.new(pos.X - 1, pos.Y - 1, pos.Z - 1)
+    local max = Vector3.new(pos.X + 1, pos.Y + 1, pos.Z + 1)
+    local region = Region3.new(min, max):ExpandToGrid(4)
+    local material = workspace.Terrain:ReadVoxels(region, 4)
+
+    -- Toggle Realistic Water Effects
+    local isUnderwater = (material[1][1][1] == Enum.Material.Water)
+    waterBlur.Enabled = isUnderwater
+    waterBlur.Size = isUnderwater and 8 or 0
+    waterDOF.Enabled = isUnderwater
+    waterCC.Enabled = isUnderwater
+
+    -- Movement Bobbing
+    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        local velocity = player.Character.HumanoidRootPart.Velocity.Magnitude
+        if velocity > 0.1 then
+            local bob = math.sin(tick() * 6.5) * (velocity / 40)
+            camera.CFrame = camera.CFrame * CFrame.new(0, bob, 0) * CFrame.Angles(0, 0, math.rad(bob * 2.5))
+        end
+    end
+end)
