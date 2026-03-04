@@ -1,0 +1,151 @@
+-- SERVICES
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+-- TOGGLE VARIABLES
+local scriptEnabled, vhsEnabled, ahEnabled, urEnabled = true, false, false, false
+local stayBrightEnabled, sbTimer = false, 0
+-- PLAYER & CAMERA SETUP
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+-- 1. THE OVERLAYS (VHS, AH, UR)
+local effectGui = Instance.new("ScreenGui", playerGui)
+effectGui.Name = "ShaderOverlays"; effectGui.IgnoreGuiInset = true; effectGui.Enabled = false
+-- Ultra Realistic Lens Dirt & Grain
+local grain = Instance.new("ImageLabel", effectGui)
+grain.Size = UDim2.new(1.1, 0, 1.1, 0); grain.Position = UDim2.new(-0.05, 0, -0.05, 0)
+grain.BackgroundTransparency = 1; grain.Image = "rbxassetid://135071197"
+grain.ImageTransparency = 0.95; grain.ScaleType = Enum.ScaleType.Tile; grain.TileSize = UDim2.new(0, 128, 0, 128)
+local lensDirt = Instance.new("ImageLabel", effectGui)
+lensDirt.Size = UDim2.new(1, 0, 1, 0); lensDirt.BackgroundTransparency = 1
+lensDirt.Image = "rbxassetid://13111603538"; lensDirt.ImageTransparency = 0.88; lensDirt.ImageColor3 = Color3.fromRGB(200, 200, 200)
+-- 2. THE "BEND" LENS & DYNAMIC FLASHLIGHT
+local lens = Instance.new("Part", workspace)
+lens.Name = "TVLens"; lens.Shape = Enum.PartType.Ball; lens.Material = Enum.Material.Glass; lens.Transparency = 1; lens.CanCollide = false; lens.Size = Vector3.new(2.1, 2.1, 2.1)
+local lightPart = Instance.new("Part", workspace)
+lightPart.Transparency = 1; lightPart.CanCollide = false; lightPart.Anchored = true
+local fl = Instance.new("SpotLight", lightPart)
+fl.Brightness = 2; fl.Range = 60; fl.Angle = 70; fl.Enabled = false; fl.Shadows = true
+-- 3. PRO LIGHTING ENGINE
+local function applyLighting(mode)
+local cc = Lighting:FindFirstChild("MainCC") or Instance.new("ColorCorrectionEffect", Lighting)
+cc.Name = "MainCC"; cc.Enabled = true
+local bloom = Lighting:FindFirstChild("URBloom") or Instance.new("BloomEffect", Lighting)
+bloom.Name = "URBloom"; bloom.Enabled = true
+if mode == "Normal" then
+Lighting.Technology = Enum.Technology.Future
+cc.TintColor = Color3.fromRGB(255, 255, 255); cc.Saturation = -0.1; cc.Contrast = 0.3
+bloom.Intensity = 0.4; bloom.Threshold = 0.9
+elseif mode == "UR" then
+cc.Contrast = 0.55; cc.Saturation = 0.15; cc.TintColor = Color3.fromRGB(240, 245, 255)
+bloom.Intensity = 1.2; bloom.Size = 24; bloom.Threshold = 0.8
+elseif mode == "VHS" then
+cc.Contrast = 0.95; cc.Saturation = -1; cc.TintColor = Color3.fromRGB(255, 255, 255)
+elseif mode == "AH" then
+cc.Contrast = 0.85; cc.Saturation = -0.4; cc.TintColor = Color3.fromRGB(170, 190, 220)
+elseif mode == "Reset" then
+Lighting.Technology = Enum.Technology.ShadowMap; cc.Enabled = false; bloom.Enabled = false
+end
+end
+applyLighting("Normal")
+-- 4. THE !RG (REMOVE GUI) SYSTEM
+local guiSnapshot = {}
+local function toggleGuiVisibility(hide)
+if hide then
+for _, gui in pairs(playerGui:GetDescendants()) do
+if gui:IsA("GuiObject") and not gui:IsDescendantOf(effectGui) then
+guiSnapshot[gui] = {bg = gui.BackgroundTransparency, txt = (gui:IsA("TextLabel") or gui:IsA("TextButton")) and gui.TextTransparency or nil, img = (gui:IsA("ImageLabel") or gui:IsA("ImageButton")) and gui.ImageTransparency or nil}
+gui.BackgroundTransparency = 1
+if guiSnapshot[gui].txt then gui.TextTransparency = 1 end
+if guiSnapshot[gui].img then gui.ImageTransparency = 1 end
+end
+end
+else
+for gui, s in pairs(guiSnapshot) do
+if gui and gui.Parent then
+gui.BackgroundTransparency = s.bg
+if s.txt then gui.TextTransparency = s.txt end
+if s.img then gui.ImageTransparency = s.img end
+end
+end
+guiSnapshot = {}
+end
+end
+-- 5. COMMANDS
+player.Chatted:Connect(function(msg)
+local lowMsg = msg:lower()
+if lowMsg == "!cl" then
+print("--- !es, !ds, !fl, !sb, !rg, !vhs, !ah, !ur, !l [color] ---")
+elseif lowMsg == "!ds" then
+scriptEnabled = false; effectGui.Enabled = false; fl.Enabled = false; lens.Transparency = 1; applyLighting("Reset"); toggleGuiVisibility(false)
+elseif lowMsg == "!es" then
+scriptEnabled = true; applyLighting("Normal")
+elseif scriptEnabled then
+if lowMsg == "!ur" then
+urEnabled = not urEnabled; vhsEnabled = false; ahEnabled = false
+effectGui.Enabled = urEnabled; lens.Transparency = urEnabled and 0.988 or 1; applyLighting(urEnabled and "UR" or "Normal")
+elseif lowMsg == "!vhs" then
+vhsEnabled = not vhsEnabled; urEnabled = false; ahEnabled = false
+effectGui.Enabled = vhsEnabled; lens.Transparency = vhsEnabled and 0.984 or 1; applyLighting(vhsEnabled and "VHS" or "Normal")
+elseif lowMsg == "!ah" then
+ahEnabled = not ahEnabled; vhsEnabled = false; urEnabled = false
+effectGui.Enabled = ahEnabled; lens.Transparency = ahEnabled and 0.982 or 1; applyLighting(ahEnabled and "AH" or "Normal")
+elseif lowMsg == "!fl" then fl.Enabled = not fl.Enabled
+elseif lowMsg == "!sb" then stayBrightEnabled = not stayBrightEnabled
+elseif lowMsg == "!rg" then toggleGuiVisibility(next(guiSnapshot) == nil)
+elseif lowMsg:sub(1,3) == "!l " then applyLighting(lowMsg:sub(4):gsub("^%l", string.upper)) end
+end
+end)
+-- 6. CORE LOOP (ULTRA REALISM PHYSICS)
+RunService.RenderStepped:Connect(function(dt)
+if not scriptEnabled then return end
+-- Flashlight with Physical Weight
+local lerpSpeed = urEnabled and 0.07 or 0.12
+lightPart.CFrame = lightPart.CFrame:Lerp(camera.CFrame, lerpSpeed)
+if fl.Enabled then
+local rayParams = RaycastParams.new()
+rayParams.FilterDescendantsInstances = {player.Character, lens, lightPart}
+local ray = workspace:Raycast(camera.CFrame.Position, camera.CFrame.LookVector * 75, rayParams)
+if ray and ray.Instance.Transparency > 0.9 then ray = nil end
+local targetBrightness, targetAngle, targetRange = 1.8, 75, 75
+if ray then
+local dist = (camera.CFrame.Position - ray.Position).Magnitude
+targetBrightness = math.clamp(32 / (dist * 0.4), 2, 50)
+targetAngle = math.clamp(dist * 6, 15, 78)
+targetRange = math.clamp(dist + 15, 20, 85)
+if stayBrightEnabled then sbTimer = 0.3 end
+elseif stayBrightEnabled and sbTimer > 0 then
+sbTimer -= dt; targetBrightness, targetAngle = 15, 35
+end
+fl.Brightness = math.lerp(fl.Brightness, targetBrightness, 0.1)
+fl.Angle = math.lerp(fl.Angle, targetAngle, 0.1)
+fl.Range = math.lerp(fl.Range, targetRange, 0.1)
+end
+-- !UR DYNAMIC CAMERA (Figure-8 Walk & Natural Sway)
+if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+local vel = player.Character.HumanoidRootPart.Velocity.Magnitude
+local t = tick()
+-- Idle Sway (Breathing)
+local sway = urEnabled and (math.sin(t * 1.5) * 0.015) or 0
+-- Non-Limping Figure-8 Walk
+local xBob, yBob, roll = 0, 0, 0
+if vel > 0.1 then
+xBob = math.cos(t * 4.5) * (vel / 100)
+yBob = math.abs(math.sin(t * 9)) * (vel / 65)
+roll = math.sin(t * 4.5) * 0.45
+end
+camera.CFrame = camera.CFrame
+* CFrame.new(xBob, yBob + sway, 0)
+* CFrame.Angles(0, 0, math.rad(roll + (urEnabled and math.sin(t * 0.5) * 0.2 or 0)))
+-- !UR Dynamic Exposure (Eyes adjusting to light/dark)
+if urEnabled then
+Lighting.ExposureCompensation = math.lerp(Lighting.ExposureCompensation, (vel > 1 and -0.2 or 0.1), 0.05)
+end
+end
+if vhsEnabled or ahEnabled or urEnabled then
+lens.CFrame = camera.CFrame * CFrame.new(0, 0, -0.65)
+grain.ImageRectOffset = Vector2.new(math.random(0, 512), math.random(0, 512))
+end
+end)
