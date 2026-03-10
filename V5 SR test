@@ -1,0 +1,285 @@
+-- SERVICES
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+
+-- WAIT FOR PLAYER & CAMERA
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local camera = workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- TOGGLE VARIABLES
+local scriptEnabled, vhsEnabled, ahEnabled, urEnabled, vhsoEnabled = true, false, false, false, false
+
+-- 1. THE OVERLAYS
+local effectGui = Instance.new("ScreenGui", playerGui)
+effectGui.Name = "ShaderOverlays"; effectGui.IgnoreGuiInset = true; effectGui.Enabled = false
+
+-- Dark overlay
+local darkOverlay = Instance.new("Frame", effectGui)
+darkOverlay.Size = UDim2.new(1, 0, 1, 0)
+darkOverlay.Position = UDim2.new(0, 0, 0, 0)
+darkOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
+darkOverlay.BackgroundTransparency = 0.25
+darkOverlay.BorderSizePixel = 0
+darkOverlay.Visible = false
+
+-- VHS Grain Texture
+local grain = Instance.new("ImageLabel", effectGui)
+grain.Size = UDim2.new(1.1, 0, 1.1, 0); grain.Position = UDim2.new(-0.05, 0, -0.05, 0)
+grain.BackgroundTransparency = 1; grain.Image = "rbxassetid://135071197"
+grain.ImageTransparency = 0.55
+grain.ScaleType = Enum.ScaleType.Tile; grain.TileSize = UDim2.new(0, 128, 0, 128)
+
+-- Vignette
+local vignette = Instance.new("ImageLabel", effectGui)
+vignette.Size = UDim2.new(1, 0, 1, 0); vignette.BackgroundTransparency = 1
+vignette.Image = "rbxassetid://257770827"; vignette.ImageTransparency = 0.0
+vignette.ImageColor3 = Color3.new(0, 0, 0); vignette.Visible = false
+
+-- 2. THE PHYSICAL ELEMENTS
+local lightPart = Instance.new("Part", workspace)
+lightPart.Transparency = 1; lightPart.CanCollide = false; lightPart.Anchored = true
+
+local fl = Instance.new("SpotLight", lightPart)
+fl.Brightness = 6
+fl.Range = 80
+fl.Angle = 45
+fl.Enabled = false
+fl.Shadows = true
+fl.Color = Color3.fromRGB(220, 230, 255)
+
+-- 3. PRO LIGHTING ENGINE
+local function applyLighting(mode)
+	local cc = Lighting:FindFirstChild("MainCC") or Instance.new("ColorCorrectionEffect", Lighting)
+	cc.Name = "MainCC"; cc.Enabled = true
+	local bloom = Lighting:FindFirstChild("URBloom") or Instance.new("BloomEffect", Lighting)
+	bloom.Name = "URBloom"; bloom.Enabled = true
+
+	vignette.Visible = (mode == "vhso")
+	darkOverlay.Visible = (mode == "vhso")
+
+	if mode == "Normal" then
+		Lighting.Technology = Enum.Technology.Future
+		cc.TintColor = Color3.new(1, 1, 1); cc.Saturation = -0.1; cc.Contrast = 0.3
+		bloom.Intensity = 0.4; bloom.Threshold = 0.9
+		Lighting.ExposureCompensation = 0
+		grain.ImageTransparency = 0.94
+
+	elseif mode == "vhso" then
+		Lighting.Technology = Enum.Technology.Future
+		cc.Contrast = 0.6
+		cc.Saturation = -0.85
+		cc.TintColor = Color3.fromRGB(200, 210, 230)
+		bloom.Intensity = 2.5
+		bloom.Threshold = 0.3
+		bloom.Size = 56
+		Lighting.ExposureCompensation = -2.5
+		grain.ImageTransparency = 0.55
+
+	elseif mode == "UR" then
+		cc.Contrast = 0.55; cc.Saturation = 0.15; cc.TintColor = Color3.fromRGB(240, 245, 255)
+		bloom.Intensity = 1.2; bloom.Size = 24; bloom.Threshold = 0.8
+
+	elseif mode == "VHS" then
+		cc.Contrast = 0.95; cc.Saturation = -1; cc.TintColor = Color3.new(1, 1, 1)
+
+	elseif mode == "Reset" then
+		Lighting.Technology = Enum.Technology.ShadowMap
+		cc.Enabled = false; bloom.Enabled = false
+		Lighting.ExposureCompensation = 0
+		grain.ImageTransparency = 0.94
+	end
+end
+
+applyLighting("Normal")
+
+-- 4. GUI VISIBILITY SYSTEM (!rg)
+local guiSnapshot = {}
+local function toggleGuiVisibility(hide)
+	if hide then
+		for _, gui in pairs(playerGui:GetDescendants()) do
+			if gui:IsA("GuiObject") and not gui:IsDescendantOf(effectGui) then
+				guiSnapshot[gui] = {
+					bg = gui.BackgroundTransparency,
+					txt = (gui:IsA("TextLabel") or gui:IsA("TextButton")) and gui.TextTransparency or nil,
+					img = (gui:IsA("ImageLabel") or gui:IsA("ImageButton")) and gui.ImageTransparency or nil
+				}
+				gui.BackgroundTransparency = 1
+				if guiSnapshot[gui].txt then gui.TextTransparency = 1 end
+				if guiSnapshot[gui].img then gui.ImageTransparency = 1 end
+			end
+		end
+	else
+		for gui, s in pairs(guiSnapshot) do
+			if gui and gui.Parent then
+				gui.BackgroundTransparency = s.bg
+				if s.txt then gui.TextTransparency = s.txt end
+				if s.img then gui.ImageTransparency = s.img end
+			end
+		end
+		guiSnapshot = {}
+	end
+end
+
+-- 5. WALK SHAKE SYSTEM
+local shakeTime = 0
+local SHAKE_SPEED  = 9      -- How fast the bob cycles
+local SHAKE_SWAY   = 0.045  -- Left/right sway amount
+local SHAKE_BOB    = 0.03   -- Up/down bob amount
+local SHAKE_TILT   = 0.6    -- Camera roll tilt (degrees)
+local SPEED_THRESHOLD = 0.5 -- Studs/s needed to trigger shake
+
+local function getWalkShake(dt)
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not rootPart or not humanoid then return CFrame.new() end
+
+	local vel = rootPart.AssemblyLinearVelocity
+	local speed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+	local onGround = humanoid.FloorMaterial ~= Enum.Material.Air
+
+	if speed > SPEED_THRESHOLD and onGround then
+		shakeTime = shakeTime + dt * SHAKE_SPEED
+		local sway = math.sin(shakeTime)      * SHAKE_SWAY
+		local bob  = math.abs(math.sin(shakeTime)) * SHAKE_BOB
+		local tilt = math.sin(shakeTime)      * math.rad(SHAKE_TILT)
+		return CFrame.new(sway, -bob, 0) * CFrame.Angles(0, 0, tilt)
+	else
+		-- Dampen shakeTime so re-entry feels natural
+		shakeTime = shakeTime + dt * 2
+		return CFrame.new()
+	end
+end
+
+-- Re-grab character on respawn
+player.CharacterAdded:Connect(function(newChar)
+	character = newChar
+end)
+
+-- 6. COMMANDS
+local function disableScript()
+	scriptEnabled = false
+	effectGui.Enabled = false
+	fl.Enabled = false
+	applyLighting("Reset")
+	toggleGuiVisibility(false)
+end
+
+local function enableScript()
+	scriptEnabled = true
+	applyLighting("Normal")
+end
+
+player.Chatted:Connect(function(msg)
+	local lowMsg = msg:lower()
+
+	if lowMsg == "!cl" then
+		-- Updated command list
+		print("--- !es / !enable, !ds / !disable, !fl, !rg, !vhs, !vhso, !ur ---")
+
+	-- DISABLE: both !ds and !disable work
+	elseif lowMsg == "!ds" or lowMsg == "!disable" then
+		disableScript()
+
+	-- ENABLE: both !es and !enable work
+	elseif lowMsg == "!es" or lowMsg == "!enable" then
+		enableScript()
+
+	elseif scriptEnabled then
+		if lowMsg == "!ur" then
+			urEnabled = not urEnabled; vhsEnabled = false; vhsoEnabled = false
+			effectGui.Enabled = urEnabled; applyLighting(urEnabled and "UR" or "Normal")
+
+		elseif lowMsg == "!vhso" then
+			vhsoEnabled = not vhsoEnabled; urEnabled = false; vhsEnabled = false
+			effectGui.Enabled = vhsoEnabled
+			fl.Enabled = vhsoEnabled
+			applyLighting(vhsoEnabled and "vhso" or "Normal")
+
+		elseif lowMsg == "!vhs" then
+			vhsEnabled = not vhsEnabled; urEnabled = false; vhsoEnabled = false
+			effectGui.Enabled = vhsEnabled; applyLighting(vhsEnabled and "VHS" or "Normal")
+
+		elseif lowMsg == "!fl" then
+			fl.Enabled = not fl.Enabled
+
+		elseif lowMsg == "!rg" then
+			toggleGuiVisibility(next(guiSnapshot) == nil)
+		end
+	end
+end)
+
+-- 7. CORE LOOP
+RunService.RenderStepped:Connect(function(dt)
+	if not scriptEnabled then return end
+
+	-- Get walk shake this frame
+	local shakeCF = getWalkShake(dt)
+
+	-- Flashlight follows camera with shake applied
+	lightPart.CFrame = lightPart.CFrame:Lerp(camera.CFrame * shakeCF, 0.18)
+
+	-- Apply walk shake to camera
+	camera.CFrame = camera.CFrame * shakeCF
+
+	-- Grain animation
+	if effectGui.Enabled then
+		grain.ImageRectOffset = Vector2.new(math.random(0, 512), math.random(0, 512))
+	end
+end)
+
+-- === SUNRISE (!sr) ADDON ===
+local srEnabled = false
+
+-- Function to handle the Skybox from Image 2/5
+local function toggleSrSky(enable)
+	local sky = Lighting:FindFirstChild("Shader-sky") or Instance.new("Sky", Lighting)
+	sky.Name = "Shader-sky"
+	if enable then
+		sky.SkyboxBk = "rbxassetid://600830446"; sky.SkyboxDn = "rbxassetid://600831635"
+		sky.SkyboxFt = "rbxassetid://600832720"; sky.SkyboxLf = "rbxassetid://600886090"
+		sky.SkyboxRt = "rbxassetid://600833862"; sky.SkyboxUp = "rbxassetid://600835177"
+		sky.SunTextureId = "rbxassetid://6281397906"; sky.SunAngularSize = 11
+	else
+		sky:Destroy()
+	end
+end
+
+player.Chatted:Connect(function(msg)
+	if msg:lower() == "!sr" then
+		srEnabled = not srEnabled
+		
+		-- Create/Get Effects
+		local cc = Lighting:FindFirstChild("MainCC") or Lighting:FindFirstChildOfClass("ColorCorrectionEffect")
+		local rays = Lighting:FindFirstChild("Shader-SunRays") or Instance.new("SunRaysEffect", Lighting)
+		local atmos = Lighting:FindFirstChild("Shader-Atmosphere") or Instance.new("Atmosphere", Lighting)
+		local dof = Lighting:FindFirstChild("Shader-Field") or Instance.new("DepthOfFieldEffect", Lighting)
+		
+		rays.Name = "Shader-SunRays"; atmos.Name = "Shader-Atmosphere"; dof.Name = "Shader-Field"
+		toggleSrSky(srEnabled)
+
+		if srEnabled then
+			-- Apply Image 1/5 & 5/5 (Atmosphere & Rays)
+			atmos.Enabled = true; atmos.Density = 0.419
+			atmos.Color = Color3.fromRGB(75, 47, 29); atmos.Decay = Color3.fromRGB(92, 60, 14)
+			rays.Enabled = true; rays.Intensity = 0.103; rays.Spread = 0.88
+			
+			-- Apply Image 3/5 (Correction)
+			if cc then cc.Brightness = -0.1; cc.Contrast = 0.3; cc.Saturation = 0 end
+			
+			-- Apply Image 4/5 (Depth of Field)
+			dof.Enabled = true; dof.FarIntensity = 0.75; dof.FocusDistance = 0.05; dof.InFocusRadius = 25
+			
+			Lighting.ClockTime = 6.4
+			print("Sunrise Enabled")
+		else
+			-- Reset to Normal
+			atmos.Enabled = false; rays.Enabled = false; dof.Enabled = false
+			if cc then cc.Brightness = 0; cc.Contrast = 0; cc.Saturation = 0 end
+			Lighting.ClockTime = 14
+			print("Sunrise Disabled")
+		end
+	end
+end)
