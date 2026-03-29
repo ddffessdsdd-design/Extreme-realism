@@ -1,0 +1,572 @@
+-- SERVICES
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local camera = workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+
+local scriptEnabled = true
+local vhsEnabled, urEnabled, analogEnabled = false, false, false
+local flashlightEnabled = false
+local guiHidden = false
+
+local PANEL_DEFAULT_POS = UDim2.new(0, 16, 0.5, -187)
+
+-- EFFECT OVERLAYS
+local effectGui = Instance.new("ScreenGui", playerGui)
+effectGui.Name = "ShaderOverlays"
+effectGui.IgnoreGuiInset = true
+effectGui.Enabled = false
+effectGui.ResetOnSpawn = false
+
+local grain = Instance.new("ImageLabel", effectGui)
+grain.Size = UDim2.new(1.1, 0, 1.1, 0)
+grain.Position = UDim2.new(-0.05, 0, -0.05, 0)
+grain.BackgroundTransparency = 1
+grain.Image = "rbxassetid://135071197"
+grain.ImageTransparency = 0.82
+grain.ScaleType = Enum.ScaleType.Tile
+grain.TileSize = UDim2.new(0, 128, 0, 128)
+
+local vignette = Instance.new("ImageLabel", effectGui)
+vignette.Size = UDim2.new(1, 0, 1, 0)
+vignette.BackgroundTransparency = 1
+vignette.Image = "rbxassetid://257770827"
+vignette.ImageTransparency = 0.2
+vignette.ImageColor3 = Color3.new(0, 0, 0)
+vignette.Visible = false
+
+local barLeft = Instance.new("Frame", effectGui)
+barLeft.Size = UDim2.new(0, 52, 1, 0)
+barLeft.Position = UDim2.new(0, 0, 0, 0)
+barLeft.BackgroundColor3 = Color3.new(0, 0, 0)
+barLeft.BorderSizePixel = 0
+barLeft.Visible = false
+
+local barRight = Instance.new("Frame", effectGui)
+barRight.Size = UDim2.new(0, 52, 1, 0)
+barRight.Position = UDim2.new(1, -52, 0, 0)
+barRight.BackgroundColor3 = Color3.new(0, 0, 0)
+barRight.BorderSizePixel = 0
+barRight.Visible = false
+
+local chromaRed = Instance.new("Frame", effectGui)
+chromaRed.Size = UDim2.new(1, 0, 1, 0)
+chromaRed.BackgroundColor3 = Color3.fromRGB(255, 30, 30)
+chromaRed.BackgroundTransparency = 0.96
+chromaRed.BorderSizePixel = 0
+chromaRed.Visible = false
+
+local chromaBlue = Instance.new("Frame", effectGui)
+chromaBlue.Size = UDim2.new(1, 0, 1, 0)
+chromaBlue.BackgroundColor3 = Color3.fromRGB(30, 80, 255)
+chromaBlue.BackgroundTransparency = 0.96
+chromaBlue.BorderSizePixel = 0
+chromaBlue.Visible = false
+
+-- Scanlines for analog horror (horizontal lines like old CRT/VHS)
+local scanlines = Instance.new("ImageLabel", effectGui)
+scanlines.Size = UDim2.new(1, 0, 1, 0)
+scanlines.BackgroundTransparency = 1
+scanlines.Image = "rbxassetid://2187357436"
+scanlines.ImageTransparency = 0.82
+scanlines.ScaleType = Enum.ScaleType.Tile
+scanlines.TileSize = UDim2.new(0, 4, 0, 4)
+scanlines.ImageColor3 = Color3.new(0, 0, 0)
+scanlines.Visible = false
+
+-- FLASHLIGHT
+local lightPart = Instance.new("Part", workspace)
+lightPart.Transparency = 1
+lightPart.CanCollide = false
+lightPart.Anchored = true
+
+local fl = Instance.new("SpotLight", lightPart)
+fl.Brightness = 3
+fl.Range = 60
+fl.Angle = 45
+fl.Enabled = false
+fl.Shadows = true
+fl.Color = Color3.fromRGB(220, 230, 255)
+
+-- MOTION BLUR
+local motionBlur = Instance.new("BlurEffect", Lighting)
+motionBlur.Name = "MotionBlur"
+motionBlur.Size = 0
+
+-- LIGHTING ENGINE
+local function applyLighting(mode)
+	local cc = Lighting:FindFirstChild("MainCC") or Instance.new("ColorCorrectionEffect", Lighting)
+	cc.Name = "MainCC"; cc.Enabled = true
+	local bloom = Lighting:FindFirstChild("URBloom") or Instance.new("BloomEffect", Lighting)
+	bloom.Name = "URBloom"; bloom.Enabled = true
+
+	vignette.Visible = false
+	barLeft.Visible = false
+	barRight.Visible = false
+	chromaRed.Visible = false
+	chromaBlue.Visible = false
+	scanlines.Visible = false
+
+	if mode == "Normal" then
+		Lighting.Technology = Enum.Technology.ShadowMap
+		cc.TintColor = Color3.new(1, 1, 1)
+		cc.Saturation = -0.1
+		cc.Contrast = 0.3
+		bloom.Intensity = 0.4
+		bloom.Threshold = 0.9
+		bloom.Size = 8
+		Lighting.ExposureCompensation = 0
+		grain.ImageTransparency = 0.94
+
+	elseif mode == "analog" then
+		-- Old recording look: washed out, low contrast, teal tint,
+		-- heavy grain, scanlines, chromatic fringing on lights
+		-- ExposureCompensation = 0 so it never goes black
+		Lighting.Technology = Enum.Technology.ShadowMap
+		cc.TintColor = Color3.fromRGB(170, 210, 220) -- muted teal, not too blue
+		cc.Saturation = -0.4   -- partial desaturation, some color shows
+		cc.Contrast = -0.1     -- NEGATIVE contrast = washed out/low quality look
+		bloom.Intensity = 1.8
+		bloom.Threshold = 0.25
+		bloom.Size = 40
+		Lighting.ExposureCompensation = 0
+		grain.ImageTransparency = 0.55  -- heavy grain = old recording
+		vignette.Visible = true
+		barLeft.Visible = true
+		barRight.Visible = true
+		chromaRed.Visible = true
+		chromaBlue.Visible = true
+		scanlines.Visible = true
+
+	elseif mode == "UR" then
+		Lighting.Technology = Enum.Technology.ShadowMap
+		cc.Contrast = 0.55
+		cc.Saturation = 0.15
+		cc.TintColor = Color3.fromRGB(240, 245, 255)
+		bloom.Intensity = 1.2
+		bloom.Size = 24
+		bloom.Threshold = 0.8
+		Lighting.ExposureCompensation = 0
+		grain.ImageTransparency = 0.94
+
+	elseif mode == "VHS" then
+		Lighting.Technology = Enum.Technology.ShadowMap
+		cc.Contrast = 0.5
+		cc.Saturation = -0.7
+		cc.TintColor = Color3.new(1, 1, 1)
+		bloom.Intensity = 0.5
+		bloom.Threshold = 0.9
+		bloom.Size = 8
+		Lighting.ExposureCompensation = -0.2
+		grain.ImageTransparency = 0.80
+
+	elseif mode == "Reset" then
+		Lighting.Technology = Enum.Technology.ShadowMap
+		cc.Enabled = false
+		bloom.Enabled = false
+		Lighting.ExposureCompensation = 0
+		grain.ImageTransparency = 0.94
+		motionBlur.Size = 0
+	end
+end
+
+applyLighting("Normal")
+
+-- WALK SHAKE
+local shakeTime = 0
+local function getWalkShake(dt)
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not rootPart or not humanoid then return CFrame.new() end
+	local vel = rootPart.AssemblyLinearVelocity
+	local speed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+	local onGround = humanoid.FloorMaterial ~= Enum.Material.Air
+	if speed > 0.5 and onGround then
+		shakeTime = shakeTime + dt * 9
+		local sway = math.sin(shakeTime) * 0.045
+		local bob = math.abs(math.sin(shakeTime)) * 0.03
+		local tilt = math.sin(shakeTime) * math.rad(0.6)
+		return CFrame.new(sway, -bob, 0) * CFrame.Angles(0, 0, tilt)
+	else
+		shakeTime = shakeTime + dt * 2
+		return CFrame.new()
+	end
+end
+
+player.CharacterAdded:Connect(function(newChar) character = newChar end)
+
+-- MAIN GUI
+local mainGui = Instance.new("ScreenGui", playerGui)
+mainGui.Name = "ShaderPanel"
+mainGui.IgnoreGuiInset = true
+mainGui.ResetOnSpawn = false
+mainGui.DisplayOrder = 9999
+
+-- GUI HIDE
+local guiSnapshot = {}
+local function toggleGuiVisibility(hide)
+	if hide then
+		for _, sg in pairs(playerGui:GetChildren()) do
+			if sg:IsA("ScreenGui") and sg.Name ~= "ShaderPanel" and sg.Name ~= "ShaderOverlays" then
+				for _, obj in pairs(sg:GetDescendants()) do
+					if obj:IsA("GuiObject") then
+						guiSnapshot[obj] = {
+							bg  = obj.BackgroundTransparency,
+							txt = (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.TextTransparency or nil,
+							img = (obj:IsA("ImageLabel") or obj:IsA("ImageButton")) and obj.ImageTransparency or nil
+						}
+						obj.BackgroundTransparency = 1
+						if guiSnapshot[obj].txt then obj.TextTransparency = 1 end
+						if guiSnapshot[obj].img then obj.ImageTransparency = 1 end
+					elseif obj:IsA("UIStroke") then
+						guiSnapshot[obj] = { thickness = obj.Thickness }
+						obj.Thickness = 0
+					end
+				end
+			end
+		end
+	else
+		for obj, s in pairs(guiSnapshot) do
+			if obj and obj.Parent then
+				if obj:IsA("UIStroke") then
+					obj.Thickness = s.thickness
+				else
+					obj.BackgroundTransparency = s.bg
+					if s.txt then obj.TextTransparency = s.txt end
+					if s.img then obj.ImageTransparency = s.img end
+				end
+			end
+		end
+		guiSnapshot = {}
+	end
+end
+
+-- REOPEN BUTTON
+local reopenBtn = Instance.new("TextButton", mainGui)
+reopenBtn.Size = UDim2.new(0, 38, 0, 38)
+reopenBtn.Position = UDim2.new(1, -48, 0, 10)
+reopenBtn.BackgroundColor3 = Color3.fromRGB(30, 18, 60)
+reopenBtn.Text = "✦"
+reopenBtn.TextColor3 = Color3.fromRGB(210, 180, 255)
+reopenBtn.TextSize = 18
+reopenBtn.Font = Enum.Font.GothamBold
+reopenBtn.BorderSizePixel = 0
+reopenBtn.Visible = false
+Instance.new("UICorner", reopenBtn).CornerRadius = UDim.new(0, 10)
+local reopenStroke = Instance.new("UIStroke", reopenBtn)
+reopenStroke.Color = Color3.fromRGB(140, 100, 255)
+reopenStroke.Thickness = 2
+
+-- PANEL
+local panel = Instance.new("Frame", mainGui)
+panel.Size = UDim2.new(0, 170, 0, 375)
+panel.Position = PANEL_DEFAULT_POS
+panel.BackgroundColor3 = Color3.fromRGB(8, 8, 18)
+panel.BorderSizePixel = 0
+panel.Active = true
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+local panelStroke = Instance.new("UIStroke", panel)
+panelStroke.Color = Color3.fromRGB(140, 100, 255)
+panelStroke.Thickness = 2
+
+-- TITLE BAR
+local titleBar = Instance.new("Frame", panel)
+titleBar.Size = UDim2.new(1, 0, 0, 38)
+titleBar.BackgroundColor3 = Color3.fromRGB(30, 18, 60)
+titleBar.BorderSizePixel = 0
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 12)
+local tfill = Instance.new("Frame", titleBar)
+tfill.Size = UDim2.new(1, 0, 0.5, 0)
+tfill.Position = UDim2.new(0, 0, 0.5, 0)
+tfill.BackgroundColor3 = Color3.fromRGB(30, 18, 60)
+tfill.BorderSizePixel = 0
+
+local titleLabel = Instance.new("TextLabel", titleBar)
+titleLabel.Size = UDim2.new(1, -40, 1, 0)
+titleLabel.Position = UDim2.new(0, 12, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "✦ SHADER FX"
+titleLabel.TextColor3 = Color3.fromRGB(210, 180, 255)
+titleLabel.TextSize = 13
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local closeBtn = Instance.new("TextButton", titleBar)
+closeBtn.Size = UDim2.new(0, 26, 0, 26)
+closeBtn.Position = UDim2.new(1, -32, 0.5, -13)
+closeBtn.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.new(1,1,1)
+closeBtn.TextSize = 12
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.BorderSizePixel = 0
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+local div1 = Instance.new("Frame", panel)
+div1.Size = UDim2.new(1, -20, 0, 1)
+div1.Position = UDim2.new(0, 10, 0, 38)
+div1.BackgroundColor3 = Color3.fromRGB(100, 70, 180)
+div1.BorderSizePixel = 0
+
+local btnList = Instance.new("Frame", panel)
+btnList.Size = UDim2.new(1, -20, 0, 245)
+btnList.Position = UDim2.new(0, 10, 0, 46)
+btnList.BackgroundTransparency = 1
+local listLayout = Instance.new("UIListLayout", btnList)
+listLayout.Padding = UDim.new(0, 5)
+listLayout.FillDirection = Enum.FillDirection.Vertical
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local function makeButton(label, order)
+	local btn = Instance.new("TextButton", btnList)
+	btn.Size = UDim2.new(1, 0, 0, 36)
+	btn.BackgroundColor3 = Color3.fromRGB(22, 18, 40)
+	btn.Text = "  " .. label
+	btn.TextColor3 = Color3.fromRGB(200, 190, 230)
+	btn.TextSize = 12
+	btn.Font = Enum.Font.GothamSemibold
+	btn.TextXAlignment = Enum.TextXAlignment.Left
+	btn.BorderSizePixel = 0
+	btn.LayoutOrder = order
+	btn.AutoButtonColor = false
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+	local stroke = Instance.new("UIStroke", btn)
+	stroke.Color = Color3.fromRGB(80, 60, 130)
+	stroke.Thickness = 1
+	local dot = Instance.new("Frame", btn)
+	dot.Size = UDim2.new(0, 8, 0, 8)
+	dot.Position = UDim2.new(1, -18, 0.5, -4)
+	dot.BackgroundColor3 = Color3.fromRGB(80, 60, 120)
+	dot.BorderSizePixel = 0
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+	return btn, dot, stroke
+end
+
+local btnVHS,    dotVHS,    sVHS    = makeButton("VHS",           1)
+local btnAH,     dotAH,     sAH     = makeButton("ANALOG HORROR", 2)
+local btnUR,     dotUR,     sUR     = makeButton("ULTRA REAL",    3)
+local btnFL,     dotFL,     sFL     = makeButton("FLASHLIGHT",    4)
+local btnHideUI, dotHideUI, sHide   = makeButton("HIDE UI",       5)
+local btnToggle, dotToggle, sToggle = makeButton("ENABLED",       6)
+
+local div2 = Instance.new("Frame", panel)
+div2.Size = UDim2.new(1, -20, 0, 1)
+div2.Position = UDim2.new(0, 10, 0, 300)
+div2.BackgroundColor3 = Color3.fromRGB(100, 70, 180)
+div2.BorderSizePixel = 0
+
+local statusBox = Instance.new("Frame", panel)
+statusBox.Size = UDim2.new(1, -20, 0, 64)
+statusBox.Position = UDim2.new(0, 10, 0, 308)
+statusBox.BackgroundColor3 = Color3.fromRGB(14, 10, 28)
+statusBox.BorderSizePixel = 0
+Instance.new("UICorner", statusBox).CornerRadius = UDim.new(0, 8)
+
+local statusTitle = Instance.new("TextLabel", statusBox)
+statusTitle.Size = UDim2.new(1, 0, 0, 18)
+statusTitle.Position = UDim2.new(0, 8, 0, 4)
+statusTitle.BackgroundTransparency = 1
+statusTitle.Text = "ACTIVE"
+statusTitle.TextColor3 = Color3.fromRGB(160, 130, 255)
+statusTitle.TextSize = 10
+statusTitle.Font = Enum.Font.GothamBold
+statusTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local statusLabel = Instance.new("TextLabel", statusBox)
+statusLabel.Size = UDim2.new(1, -10, 1, -22)
+statusLabel.Position = UDim2.new(0, 8, 0, 20)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "None"
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
+statusLabel.TextSize = 11
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.TextYAlignment = Enum.TextYAlignment.Top
+statusLabel.TextWrapped = true
+
+local function updateStatus()
+	local parts = {}
+	if vhsEnabled        then table.insert(parts, "◈ VHS") end
+	if analogEnabled     then table.insert(parts, "◈ ANALOG HORROR") end
+	if urEnabled         then table.insert(parts, "◈ ULTRA REAL") end
+	if flashlightEnabled then table.insert(parts, "◈ FLASHLIGHT") end
+	if guiHidden         then table.insert(parts, "◈ HIDE UI") end
+	if not scriptEnabled then table.insert(parts, "◈ DISABLED") end
+	statusLabel.Text = #parts > 0 and table.concat(parts, "\n") or "None"
+end
+
+local function setState(btn, dot, stroke, on, label)
+	btn.BackgroundColor3 = on and Color3.fromRGB(40, 25, 80) or Color3.fromRGB(22, 18, 40)
+	dot.BackgroundColor3 = on and Color3.fromRGB(160, 120, 255) or Color3.fromRGB(80, 60, 120)
+	stroke.Color = on and Color3.fromRGB(150, 100, 255) or Color3.fromRGB(80, 60, 130)
+	btn.TextColor3 = on and Color3.fromRGB(230, 210, 255) or Color3.fromRGB(200, 190, 230)
+	btn.Text = "  " .. label
+end
+
+setState(btnVHS,    dotVHS,    sVHS,    false, "VHS")
+setState(btnAH,     dotAH,     sAH,     false, "ANALOG HORROR")
+setState(btnUR,     dotUR,     sUR,     false, "ULTRA REAL")
+setState(btnFL,     dotFL,     sFL,     false, "FLASHLIGHT")
+setState(btnHideUI, dotHideUI, sHide,   false, "HIDE UI")
+setState(btnToggle, dotToggle, sToggle, true,  "ENABLED")
+updateStatus()
+
+local function resetShaders()
+	vhsEnabled = false; analogEnabled = false; urEnabled = false
+	setState(btnVHS, dotVHS, sVHS, false, "VHS")
+	setState(btnAH,  dotAH,  sAH,  false, "ANALOG HORROR")
+	setState(btnUR,  dotUR,  sUR,  false, "ULTRA REAL")
+	effectGui.Enabled = false
+	motionBlur.Size = 0
+end
+
+btnVHS.MouseButton1Click:Connect(function()
+	if not scriptEnabled then return end
+	local wasOn = vhsEnabled
+	resetShaders()
+	if not wasOn then
+		vhsEnabled = true; effectGui.Enabled = true
+		applyLighting("VHS")
+		setState(btnVHS, dotVHS, sVHS, true, "VHS")
+	else applyLighting("Normal") end
+	updateStatus()
+end)
+
+btnAH.MouseButton1Click:Connect(function()
+	if not scriptEnabled then return end
+	local wasOn = analogEnabled
+	resetShaders()
+	if not wasOn then
+		analogEnabled = true; effectGui.Enabled = true
+		applyLighting("analog")
+		setState(btnAH, dotAH, sAH, true, "ANALOG HORROR")
+	else applyLighting("Normal") end
+	updateStatus()
+end)
+
+btnUR.MouseButton1Click:Connect(function()
+	if not scriptEnabled then return end
+	local wasOn = urEnabled
+	resetShaders()
+	if not wasOn then
+		urEnabled = true; effectGui.Enabled = true
+		applyLighting("UR")
+		setState(btnUR, dotUR, sUR, true, "ULTRA REAL")
+	else applyLighting("Normal") end
+	updateStatus()
+end)
+
+btnFL.MouseButton1Click:Connect(function()
+	if not scriptEnabled then return end
+	flashlightEnabled = not flashlightEnabled
+	fl.Enabled = flashlightEnabled
+	setState(btnFL, dotFL, sFL, flashlightEnabled, "FLASHLIGHT")
+	updateStatus()
+end)
+
+btnHideUI.MouseButton1Click:Connect(function()
+	guiHidden = not guiHidden
+	toggleGuiVisibility(guiHidden)
+	setState(btnHideUI, dotHideUI, sHide, guiHidden, "HIDE UI")
+	updateStatus()
+end)
+
+btnToggle.MouseButton1Click:Connect(function()
+	scriptEnabled = not scriptEnabled
+	if not scriptEnabled then
+		resetShaders(); flashlightEnabled = false; fl.Enabled = false
+		applyLighting("Reset")
+		if guiHidden then
+			guiHidden = false; toggleGuiVisibility(false)
+			setState(btnHideUI, dotHideUI, sHide, false, "HIDE UI")
+		end
+		setState(btnToggle, dotToggle, sToggle, false, "DISABLED")
+	else
+		applyLighting("Normal")
+		setState(btnToggle, dotToggle, sToggle, true, "ENABLED")
+	end
+	updateStatus()
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+	panel.Visible = false
+	reopenBtn.Visible = true
+end)
+
+reopenBtn.MouseButton1Click:Connect(function()
+	panel.Visible = true
+	panel.Position = PANEL_DEFAULT_POS
+	reopenBtn.Visible = false
+end)
+
+-- DRAG
+local dragging, dragStart, startPos = false, nil, nil
+titleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true; dragStart = input.Position; startPos = panel.Position
+	end
+end)
+titleBar.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		panel.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + delta.X,
+			startPos.Y.Scale, startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- CORE LOOP
+local smoothFlCFrame = CFrame.new()
+local grainTimer = 0
+local GRAIN_UPDATE_RATE = 0.12
+local prevCamCF = camera.CFrame
+
+RunService.RenderStepped:Connect(function(dt)
+	if not scriptEnabled then return end
+
+	local shakeCF = getWalkShake(dt)
+	camera.CFrame = camera.CFrame * shakeCF
+
+	-- Motion blur from camera movement
+	local prevLook = prevCamCF.LookVector
+	local currLook = camera.CFrame.LookVector
+	local angle = math.acos(math.clamp(prevLook:Dot(currLook), -1, 1))
+	prevCamCF = camera.CFrame
+	local targetBlur = math.clamp(angle * (180 / math.pi) * 5, 0, 20)
+	motionBlur.Size = motionBlur.Size + (targetBlur - motionBlur.Size) * 0.3
+
+	if fl.Enabled then
+		smoothFlCFrame = smoothFlCFrame:Lerp(camera.CFrame, dt * 6)
+		lightPart.CFrame = smoothFlCFrame
+	end
+
+	if effectGui.Enabled then
+		grainTimer = grainTimer + dt
+		if grainTimer >= GRAIN_UPDATE_RATE then
+			grainTimer = 0
+			grain.ImageRectOffset = Vector2.new(
+				math.random(0, 512),
+				math.random(0, 512)
+			)
+		end
+		if analogEnabled then
+			local drift = math.sin(tick() * 2) * 1.5
+			chromaRed.Position = UDim2.new(0, -2 + drift, 0, 0)
+			chromaBlue.Position = UDim2.new(0, 2 - drift, 0, 0)
+		end
+	end
+end)
