@@ -1,0 +1,2744 @@
+
+-- SERVICES
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
+local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local camera = workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+
+math.randomseed(math.floor(os.clock() * 1000000))
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+local function clamp(v, minV, maxV)
+	return math.max(minV, math.min(maxV, v))
+end
+
+local function safeFindChild(parent, name)
+	local obj = parent:FindFirstChild(name)
+	return obj
+end
+
+local function isPcInputAvailable()
+	return UserInputService.KeyboardEnabled and not UserInputService.TouchEnabled
+end
+
+local function detectDeviceMode()
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		return "Phone"
+	end
+
+	if UserInputService.TouchEnabled and UserInputService.KeyboardEnabled then
+		return "Tablet"
+	end
+
+	if pcall(function()
+		return GuiService:IsTenFootInterface()
+	end) then
+		if GuiService:IsTenFootInterface() then
+			return "PC"
+		end
+	end
+
+	return "PC"
+end
+
+local function roundNumber(n, decimals)
+	local p = 10 ^ (decimals or 0)
+	return math.floor(n * p + 0.5) / p
+end
+
+-- ============================================================
+-- STATE
+-- ============================================================
+local scriptEnabled = true
+local currentMode = "Normal"
+
+local vhsEnabled = false
+local analogEnabled = false
+local urEnabled = false
+local untitledEnabled = false
+local pressureEnabled = false
+local bwEnabled = false
+local crtEnabled = false
+local nightVisionEnabled = false
+local thermalEnabled = false
+local foundFootageEnabled = false
+
+local flashlightEnabled = false
+local motionBlurEnabled = false
+local guiHidden = false
+local mainPanelVisible = true
+
+local uiModeSetting = "Auto" -- Auto / Phone / Tablet / PC
+local resolvedUiMode = detectDeviceMode()
+
+local themeName = "Black / Red"
+local gradientName = "Red / White"
+
+
+local customAdjust = {
+	saturation = 0,
+	contrast = 0,
+	brightness = 0,
+	bloom = 0,
+	exposure = 0,
+}
+
+local flSettings = {
+	brightness = 5,
+	heaviness = 0.2,
+	color = Color3.fromRGB(255, 255, 255),
+	blendColors = false,
+	range = 60,
+}
+
+local mbSettings = {
+	strength = 15,
+	speed = 3,
+}
+
+local vhsSettings = {
+	contrast = 0.85,
+	saturation = -1.0,
+	exposure = -0.25,
+}
+
+local ahSettings = {
+	contrast = -0.10,
+	saturation = -0.35,
+	bloom = 1.2,
+}
+
+local themePresets = {
+	["Black / Red"] = {
+		bg = Color3.fromRGB(4, 4, 4),
+		bg2 = Color3.fromRGB(18, 10, 10),
+		panelTop = Color3.fromRGB(22, 12, 12),
+		stroke = Color3.fromRGB(255, 255, 255),
+		accent = Color3.fromRGB(220, 40, 40),
+		text = Color3.fromRGB(245, 245, 245),
+		muted = Color3.fromRGB(170, 170, 170),
+		dot = Color3.fromRGB(220, 40, 40),
+	},
+	["Black / White"] = {
+		bg = Color3.fromRGB(4, 4, 4),
+		bg2 = Color3.fromRGB(18, 18, 18),
+		panelTop = Color3.fromRGB(25, 25, 25),
+		stroke = Color3.fromRGB(255, 255, 255),
+		accent = Color3.fromRGB(245, 245, 245),
+		text = Color3.fromRGB(245, 245, 245),
+		muted = Color3.fromRGB(170, 170, 170),
+		dot = Color3.fromRGB(255, 255, 255),
+	},
+	["Black / Purple"] = {
+		bg = Color3.fromRGB(5, 4, 8),
+		bg2 = Color3.fromRGB(18, 10, 28),
+		panelTop = Color3.fromRGB(22, 12, 40),
+		stroke = Color3.fromRGB(230, 210, 255),
+		accent = Color3.fromRGB(160, 80, 255),
+		text = Color3.fromRGB(240, 230, 255),
+		muted = Color3.fromRGB(175, 165, 195),
+		dot = Color3.fromRGB(160, 80, 255),
+	},
+	["Black / Blue"] = {
+		bg = Color3.fromRGB(4, 6, 10),
+		bg2 = Color3.fromRGB(10, 16, 24),
+		panelTop = Color3.fromRGB(14, 22, 34),
+		stroke = Color3.fromRGB(230, 240, 255),
+		accent = Color3.fromRGB(80, 170, 255),
+		text = Color3.fromRGB(240, 246, 255),
+		muted = Color3.fromRGB(165, 180, 200),
+		dot = Color3.fromRGB(80, 170, 255),
+	},
+}
+
+local gradientPresets = {
+	["Red / White"] = {
+		top = Color3.fromRGB(255, 255, 255),
+		bottom = Color3.fromRGB(225, 40, 40),
+	},
+	["White / Purple"] = {
+		top = Color3.fromRGB(255, 255, 255),
+		bottom = Color3.fromRGB(160, 80, 255),
+	},
+	["Red / Black"] = {
+		top = Color3.fromRGB(255, 60, 60),
+		bottom = Color3.fromRGB(0, 0, 0),
+	},
+	["White / Blue"] = {
+		top = Color3.fromRGB(255, 255, 255),
+		bottom = Color3.fromRGB(80, 170, 255),
+	},
+}
+
+local shakePresets = {
+	Off = 0,
+	Low = 0.004,
+	Medium = 0.008,
+	High = 0.013,
+	Extreme = 0.020,
+}
+
+local modeConfigs = {
+	Normal = {
+		saturation = -0.05,
+		contrast = 0.08,
+		brightness = 0,
+		exposure = 0,
+		tint = Color3.fromRGB(255, 255, 255),
+		bloomIntensity = 0.12,
+		bloomThreshold = 0.92,
+		bloomSize = 8,
+		overlays = {},
+	},
+	VHS = {
+		saturation = -1.0,
+		contrast = 0.78,
+		brightness = -0.06,
+		exposure = -0.22,
+		tint = Color3.fromRGB(255, 255, 255),
+		bloomIntensity = 0.10,
+		bloomThreshold = 0.95,
+		bloomSize = 6,
+		overlays = { vignette = true, scanlines = true, chroma = true, bars = true },
+	},
+	analog = {
+		saturation = -0.45,
+		contrast = 0.10,
+		brightness = -0.03,
+		exposure = 0,
+		tint = Color3.fromRGB(190, 210, 220),
+		bloomIntensity = 0.75,
+		bloomThreshold = 0.35,
+		bloomSize = 24,
+		overlays = { vignette = true, scanlines = true, chroma = true, bars = true },
+	},
+	UR = {
+		saturation = 0.16,
+		contrast = 0.55,
+		brightness = 0.16,
+		exposure = 0.10,
+		tint = Color3.fromRGB(245, 245, 255),
+		bloomIntensity = 1.40,
+		bloomThreshold = 0.78,
+		bloomSize = 26,
+		overlays = { vignette = false, scanlines = false, chroma = false, bars = false },
+	},
+	untitled = {
+		saturation = 0.12,
+		contrast = 0.34,
+		brightness = 0.04,
+		exposure = 0.08,
+		tint = Color3.fromRGB(255, 248, 235),
+		bloomIntensity = 0.28,
+		bloomThreshold = 0.95,
+		bloomSize = 8,
+		overlays = { vignette = false, scanlines = false, chroma = false, bars = false },
+	},
+	pressure = {
+		saturation = -0.60,
+		contrast = 0.48,
+		brightness = -0.18,
+		exposure = -1.15,
+		tint = Color3.fromRGB(120, 70, 170),
+		bloomIntensity = 1.9,
+		bloomThreshold = 0.25,
+		bloomSize = 42,
+		overlays = { vignette = true, scanlines = true, chroma = false, bars = false, pressure = true },
+	},
+	bw = {
+		saturation = -1.0,
+		contrast = 0.28,
+		brightness = 0.12,
+		exposure = 0.22,
+		tint = Color3.fromRGB(255, 255, 255),
+		bloomIntensity = 0.20,
+		bloomThreshold = 0.88,
+		bloomSize = 12,
+		overlays = { vignette = true, scanlines = false, chroma = false, bars = false, bwGlow = true },
+	},
+	crt = {
+		saturation = -0.25,
+		contrast = 0.18,
+		brightness = 0.03,
+		exposure = 0,
+		tint = Color3.fromRGB(230, 255, 230),
+		bloomIntensity = 0.24,
+		bloomThreshold = 0.90,
+		bloomSize = 10,
+		overlays = { vignette = true, scanlines = true, chroma = true, bars = true },
+	},
+	nightVision = {
+		saturation = -1.0,
+		contrast = 0.10,
+		brightness = 0.26,
+		exposure = 0.18,
+		tint = Color3.fromRGB(140, 255, 140),
+		bloomIntensity = 0.85,
+		bloomThreshold = 0.68,
+		bloomSize = 18,
+		overlays = { vignette = true, scanlines = true, chroma = false, bars = false },
+	},
+	thermal = {
+		saturation = 0.48,
+		contrast = 0.28,
+		brightness = 0.10,
+		exposure = 0.05,
+		tint = Color3.fromRGB(255, 170, 80),
+		bloomIntensity = 0.56,
+		bloomThreshold = 0.82,
+		bloomSize = 18,
+		overlays = { vignette = true, scanlines = false, chroma = false, bars = false },
+	},
+	foundFootage = {
+		saturation = -0.78,
+		contrast = 0.34,
+		brightness = -0.05,
+		exposure = -0.12,
+		tint = Color3.fromRGB(245, 245, 245),
+		bloomIntensity = 0.12,
+		bloomThreshold = 0.95,
+		bloomSize = 8,
+		overlays = { vignette = true, scanlines = true, chroma = false, bars = false },
+	},
+}
+
+local PANEL_DEFAULT_POS = UDim2.new(0, 16, 0.5, -260)
+local SIDE_GAP = 8
+
+-- ============================================================
+-- UI REFERENCES
+-- ============================================================
+local refs = {
+	modeButtons = {},
+	optionButtons = {},
+	sidePanels = {},
+	activeButtonStates = {},
+	allThemeObjects = {},
+}
+
+-- ============================================================
+-- THEME / DEVICE RESIZE
+-- ============================================================
+local theme = themePresets[themeName]
+local gradientTheme = gradientPresets[gradientName]
+
+local function getResolvedUiMode()
+	if uiModeSetting == "Auto" then
+		return detectDeviceMode()
+	end
+	return uiModeSetting
+end
+
+local function getUiSizes()
+	local mode = getResolvedUiMode()
+	if mode == "Phone" then
+		return {
+			panelW = 188,
+			panelH = 560,
+			sideW = 168,
+			sideH = 276,
+			buttonH = 34,
+			textSize = 11,
+			titleSize = 13,
+			buttonTextSize = 10,
+			statusSize = 9,
+			scale = 1,
+		}
+	elseif mode == "Tablet" then
+		return {
+			panelW = 220,
+			panelH = 650,
+			sideW = 180,
+			sideH = 300,
+			buttonH = 36,
+			textSize = 12,
+			titleSize = 14,
+			buttonTextSize = 11,
+			statusSize = 10,
+			scale = 1.05,
+		}
+	else
+		return {
+			panelW = 248,
+			panelH = 710,
+			sideW = 188,
+			sideH = 322,
+			buttonH = 38,
+			textSize = 13,
+			titleSize = 15,
+			buttonTextSize = 11,
+			statusSize = 10,
+			scale = 1.10,
+		}
+	end
+end
+
+-- ============================================================
+-- EFFECT OVERLAYS
+-- ============================================================
+local effectGui = Instance.new("ScreenGui")
+effectGui.Name = "ShaderOverlays"
+effectGui.IgnoreGuiInset = true
+effectGui.Enabled = false
+effectGui.ResetOnSpawn = false
+effectGui.DisplayOrder = 9998
+effectGui.Parent = playerGui
+
+local function makeOverlayFrame(parent, name, color, transparency, visible)
+	local f = Instance.new("Frame")
+	f.Name = name
+	f.Parent = parent
+	f.BackgroundColor3 = color
+	f.BackgroundTransparency = transparency
+	f.BorderSizePixel = 0
+	f.Visible = visible or false
+	return f
+end
+
+local vignetteTop = makeOverlayFrame(effectGui, "VignetteTop", Color3.new(0,0,0), 0.35, false)
+vignetteTop.Size = UDim2.new(1, 0, 0, 40)
+vignetteTop.Position = UDim2.new(0, 0, 0, 0)
+
+local vignetteBottom = makeOverlayFrame(effectGui, "VignetteBottom", Color3.new(0,0,0), 0.35, false)
+vignetteBottom.Size = UDim2.new(1, 0, 0, 48)
+vignetteBottom.Position = UDim2.new(0, 0, 1, -48)
+
+local vignetteLeft = makeOverlayFrame(effectGui, "VignetteLeft", Color3.new(0,0,0), 0.40, false)
+vignetteLeft.Size = UDim2.new(0, 44, 1, 0)
+vignetteLeft.Position = UDim2.new(0, 0, 0, 0)
+
+local vignetteRight = makeOverlayFrame(effectGui, "VignetteRight", Color3.new(0,0,0), 0.40, false)
+vignetteRight.Size = UDim2.new(0, 44, 1, 0)
+vignetteRight.Position = UDim2.new(1, -44, 0, 0)
+
+local pressureTint = makeOverlayFrame(effectGui, "PressureTint", Color3.fromRGB(55, 15, 85), 0.68, false)
+pressureTint.Size = UDim2.new(1, 0, 1, 0)
+pressureTint.Position = UDim2.new(0, 0, 0, 0)
+
+local bwGlow = makeOverlayFrame(effectGui, "BWGlow", Color3.fromRGB(255,255,255), 0.95, false)
+bwGlow.Size = UDim2.new(1.25, 0, 1.25, 0)
+bwGlow.Position = UDim2.new(-0.125, 0, -0.125, 0)
+local bwGlowCorner = Instance.new("UICorner")
+bwGlowCorner.CornerRadius = UDim.new(1, 0)
+bwGlowCorner.Parent = bwGlow
+local bwGlowGrad = Instance.new("UIGradient")
+bwGlowGrad.Rotation = 45
+bwGlowGrad.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 1),
+	NumberSequenceKeypoint.new(0.45, 0.82),
+	NumberSequenceKeypoint.new(0.55, 0.82),
+	NumberSequenceKeypoint.new(1, 1),
+})
+bwGlowGrad.Parent = bwGlow
+
+local chromaRed = makeOverlayFrame(effectGui, "ChromaRed", Color3.fromRGB(255, 40, 40), 0.96, false)
+chromaRed.Size = UDim2.new(1, 0, 1, 0)
+
+local chromaBlue = makeOverlayFrame(effectGui, "ChromaBlue", Color3.fromRGB(80, 140, 255), 0.96, false)
+chromaBlue.Size = UDim2.new(1, 0, 1, 0)
+
+local scanlineBars = {}
+for i = 1, 96 do
+	local bar = makeOverlayFrame(effectGui, "Scanline" .. i, Color3.new(0,0,0), 0.88, false)
+	bar.Size = UDim2.new(1, 0, 0, 1)
+	bar.ZIndex = 50
+	scanlineBars[i] = bar
+end
+
+local function setOverlayVisibility(name, visible)
+	if name == "vignette" then
+		vignetteTop.Visible = visible
+		vignetteBottom.Visible = visible
+		vignetteLeft.Visible = visible
+		vignetteRight.Visible = visible
+	elseif name == "pressure" then
+		pressureTint.Visible = visible
+	elseif name == "bwGlow" then
+		bwGlow.Visible = visible
+	elseif name == "chroma" then
+		chromaRed.Visible = visible
+		chromaBlue.Visible = visible
+	elseif name == "bars" then
+		for _, bar in ipairs(scanlineBars) do
+			bar.Visible = visible
+		end
+	end
+end
+
+local function hideAllOverlays()
+	vignetteTop.Visible = false
+	vignetteBottom.Visible = false
+	vignetteLeft.Visible = false
+	vignetteRight.Visible = false
+	pressureTint.Visible = false
+	bwGlow.Visible = false
+	chromaRed.Visible = false
+	chromaBlue.Visible = false
+	for _, bar in ipairs(scanlineBars) do
+		bar.Visible = false
+	end
+end
+
+-- ============================================================
+-- LIGHTING
+-- ============================================================
+local lightPart = Instance.new("Part")
+lightPart.Name = "ShaderFlashlightPart"
+lightPart.Parent = workspace
+lightPart.Transparency = 1
+lightPart.CanCollide = false
+lightPart.Anchored = true
+lightPart.Size = Vector3.new(1, 1, 1)
+lightPart.CastShadow = false
+
+local fl = Instance.new("SpotLight")
+fl.Parent = lightPart
+fl.Brightness = flSettings.brightness
+fl.Range = flSettings.range
+fl.Angle = 45
+fl.Enabled = false
+fl.Shadows = true
+fl.Color = flSettings.color
+
+local motionBlur = Instance.new("BlurEffect")
+motionBlur.Name = "MotionBlur"
+motionBlur.Parent = Lighting
+motionBlur.Size = 0
+
+local function getEffects()
+	local cc = safeFindChild(Lighting, "MainCC")
+	if not cc then
+		cc = Instance.new("ColorCorrectionEffect")
+		cc.Name = "MainCC"
+		cc.Parent = Lighting
+	end
+
+	local bloom = safeFindChild(Lighting, "MainBloom")
+	if not bloom then
+		bloom = Instance.new("BloomEffect")
+		bloom.Name = "MainBloom"
+		bloom.Parent = Lighting
+	end
+
+	return cc, bloom
+end
+
+local function applyFlSettings()
+	fl.Brightness = flSettings.brightness
+	fl.Range = flSettings.range
+	if flSettings.blendColors then
+		local a = Lighting.Ambient
+		fl.Color = Color3.new(
+			(flSettings.color.R + a.R) / 2,
+			(flSettings.color.G + a.G) / 2,
+			(flSettings.color.B + a.B) / 2
+		)
+	else
+		fl.Color = flSettings.color
+	end
+end
+
+local function applyMode(mode)
+	local cc, bloom = getEffects()
+	local cfg = modeConfigs[mode] or modeConfigs.Normal
+
+	currentMode = mode
+
+	effectGui.Enabled = mode ~= "Normal"
+
+	hideAllOverlays()
+
+	Lighting.Technology = Enum.Technology.ShadowMap
+
+	cc.Enabled = true
+	bloom.Enabled = true
+
+	local saturation = cfg.saturation
+	local contrast = cfg.contrast
+	local brightness = cfg.brightness
+	local exposure = cfg.exposure
+	local bloomIntensity = cfg.bloomIntensity
+	local bloomThreshold = cfg.bloomThreshold
+	local bloomSize = cfg.bloomSize
+	local tint = cfg.tint
+
+	if mode == "VHS" then
+		saturation = vhsSettings.saturation
+		contrast = vhsSettings.contrast
+		exposure = vhsSettings.exposure
+	elseif mode == "analog" then
+		saturation = ahSettings.saturation
+		contrast = ahSettings.contrast
+		bloomIntensity = ahSettings.bloom
+	end
+
+	cc.TintColor = tint
+	cc.Saturation = clamp(saturation + customAdjust.saturation, -1, 1)
+	cc.Contrast = clamp(contrast + customAdjust.contrast, -1, 1)
+	cc.Brightness = clamp(brightness + customAdjust.brightness, -1, 1)
+
+	Lighting.ExposureCompensation = clamp(exposure + customAdjust.exposure, -5, 5)
+
+	bloom.Intensity = math.max(0, bloomIntensity + customAdjust.bloom)
+	bloom.Threshold = clamp(bloomThreshold, 0, 1)
+	bloom.Size = math.max(0, bloomSize)
+
+	for overlayName, isVisible in pairs(cfg.overlays or {}) do
+		setOverlayVisibility(overlayName, isVisible)
+	end
+
+	if mode == "Normal" then
+		effectGui.Enabled = false
+		cc.Enabled = false
+		bloom.Enabled = false
+		Lighting.ExposureCompensation = 0
+		hideAllOverlays()
+	end
+
+	vhsEnabled = (mode == "VHS")
+	analogEnabled = (mode == "analog")
+	urEnabled = (mode == "UR")
+	untitledEnabled = (mode == "untitled")
+	pressureEnabled = (mode == "pressure")
+	bwEnabled = (mode == "bw")
+	crtEnabled = (mode == "crt")
+	nightVisionEnabled = (mode == "nightVision")
+	thermalEnabled = (mode == "thermal")
+	foundFootageEnabled = (mode == "foundFootage")
+end
+
+-- ============================================================
+-- WALK SHAKE
+-- ============================================================
+local shakeTime = 0
+local function getWalkShake(dt)
+	if not cameraShakeEnabled or cameraShakePreset == "Off" then
+		return CFrame.new()
+	end
+
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not rootPart then
+		return CFrame.new()
+	end
+
+	local vel = rootPart.AssemblyLinearVelocity
+	local speed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+	local moving = speed > 0.8 and humanoid.FloorMaterial ~= Enum.Material.Air
+	if not moving then
+		shakeTime = shakeTime + dt * 2
+		return CFrame.new()
+	end
+
+	shakeTime = shakeTime + dt * (8 + speed * 0.15)
+
+	local baseAmp = shakePresets[cameraShakePreset] or 0
+	local amplitude = baseAmp * clamp(speed / 16, 0.55, 1.35)
+
+	local x = math.sin(shakeTime * 7.0) * amplitude
+	local y = math.abs(math.sin(shakeTime * 11.0)) * amplitude * 0.65
+	local z = math.sin(shakeTime * 4.5) * amplitude * 0.45
+	local roll = math.sin(shakeTime * 5.5) * math.rad(0.35 + (amplitude * 80))
+
+	return CFrame.new(x, -y, z) * CFrame.Angles(0, 0, roll)
+end
+
+-- ============================================================
+-- UI CREATION
+-- ============================================================
+local mainGui = Instance.new("ScreenGui")
+mainGui.Name = "ShaderPanel"
+mainGui.IgnoreGuiInset = true
+mainGui.ResetOnSpawn = false
+mainGui.DisplayOrder = 9999
+mainGui.Parent = playerGui
+
+local controlGui = Instance.new("ScreenGui")
+controlGui.Name = "ShaderControl"
+controlGui.IgnoreGuiInset = true
+controlGui.ResetOnSpawn = false
+controlGui.DisplayOrder = 10000
+controlGui.Parent = playerGui
+
+local function registerThemeObject(obj)
+	table.insert(refs.allThemeObjects, obj)
+	return obj
+end
+
+local function createCorner(parent, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius or 10)
+	c.Parent = parent
+	return c
+end
+
+local function createStroke(parent, thickness, color)
+	local s = Instance.new("UIStroke")
+	s.Thickness = thickness or 1
+	s.Color = color or theme.stroke
+	s.Parent = parent
+	return s
+end
+
+local function styleButton(btn, accentColor)
+	btn.BackgroundColor3 = theme.bg2
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+	createCorner(btn, 8)
+	local st = createStroke(btn, 1, Color3.fromRGB(50, 50, 50))
+	local accent = Instance.new("Frame")
+	accent.Name = "Accent"
+	accent.Parent = btn
+	accent.Size = UDim2.new(0, 3, 0, 18)
+	accent.Position = UDim2.new(0, 8, 0.5, -9)
+	accent.BackgroundColor3 = accentColor or theme.accent
+	accent.BorderSizePixel = 0
+	createCorner(accent, 4)
+	return st, accent
+end
+
+local function makeModeButton(parent, label, order, accentColor)
+	local btn = Instance.new("TextButton")
+	btn.Parent = parent
+	btn.Size = UDim2.new(1, 0, 0, getUiSizes().buttonH)
+	btn.Text = ""
+	btn.LayoutOrder = order
+	local stroke, accent = styleButton(btn, accentColor)
+	local txt = Instance.new("TextLabel")
+	txt.Parent = btn
+	txt.BackgroundTransparency = 1
+	txt.Size = UDim2.new(1, -42, 1, 0)
+	txt.Position = UDim2.new(0, 20, 0, 0)
+	txt.Font = Enum.Font.GothamSemibold
+	txt.Text = label
+	txt.TextXAlignment = Enum.TextXAlignment.Left
+	txt.TextYAlignment = Enum.TextYAlignment.Center
+	txt.TextSize = getUiSizes().buttonTextSize
+	txt.TextColor3 = theme.text
+	local dot = Instance.new("Frame")
+	dot.Parent = btn
+	dot.Size = UDim2.new(0, 8, 0, 8)
+	dot.Position = UDim2.new(1, -18, 0.5, -4)
+	dot.BackgroundColor3 = theme.muted
+	dot.BorderSizePixel = 0
+	createCorner(dot, 99)
+	local meta = {
+		btn = btn,
+		label = txt,
+		dot = dot,
+		stroke = stroke,
+		accent = accent,
+		baseLabel = label,
+		onLabel = label,
+		offLabel = label,
+		active = false,
+	}
+	table.insert(refs.modeButtons, meta)
+	return meta
+end
+
+local function makeOptBtn(parent, label, order)
+	local btn = Instance.new("TextButton")
+	btn.Parent = parent
+	btn.Size = UDim2.new(1, 0, 0, 26)
+	btn.BackgroundColor3 = theme.bg2
+	btn.Text = label
+	btn.TextColor3 = theme.text
+	btn.TextSize = 10
+	btn.Font = Enum.Font.GothamSemibold
+	btn.BorderSizePixel = 0
+	btn.LayoutOrder = order
+	btn.AutoButtonColor = false
+	createCorner(btn, 7)
+	local st = createStroke(btn, 1, Color3.fromRGB(55, 55, 55))
+	local meta = {
+		btn = btn,
+		stroke = st,
+		active = false,
+	}
+	table.insert(refs.optionButtons, meta)
+	return meta
+end
+
+local function setModeButtonState(meta, active, onText, offText)
+	meta.active = active
+	meta.btn.BackgroundColor3 = active and Color3.fromRGB(30, 20, 20) or theme.bg2
+	meta.stroke.Color = active and theme.accent or Color3.fromRGB(55, 55, 55)
+	meta.label.TextColor3 = active and theme.text or theme.muted
+	meta.dot.BackgroundColor3 = active and theme.dot or Color3.fromRGB(60, 60, 60)
+	if onText then
+		meta.label.Text = active and onText or (offText or onText)
+	end
+end
+
+local function setOptButtonState(meta, active)
+	meta.active = active
+	meta.btn.BackgroundColor3 = active and Color3.fromRGB(30, 20, 20) or theme.bg2
+	meta.stroke.Color = active and theme.accent or Color3.fromRGB(55, 55, 55)
+	meta.btn.TextColor3 = active and theme.text or theme.muted
+end
+
+local function applyTheme()
+	theme = themePresets[themeName] or themePresets["Black / Red"]
+	gradientTheme = gradientPresets[gradientName] or gradientPresets["Red / White"]
+
+	if refs.panel then
+		refs.panel.BackgroundColor3 = theme.bg
+	end
+	if refs.panelStroke then
+		refs.panelStroke.Color = theme.stroke
+	end
+	if refs.panelGrad then
+		refs.panelGrad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, theme.bg2),
+			ColorSequenceKeypoint.new(1, theme.bg),
+		})
+	end
+	if refs.titleBar then
+		refs.titleBar.BackgroundColor3 = theme.panelTop
+	end
+	if refs.titleGrad then
+		refs.titleGrad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, gradientTheme.top),
+			ColorSequenceKeypoint.new(1, gradientTheme.bottom),
+		})
+	end
+	if refs.titleLabel then
+		refs.titleLabel.TextColor3 = theme.text
+		refs.titleLabel.TextSize = getUiSizes().titleSize
+	end
+	if refs.statusBox then
+		refs.statusBox.BackgroundColor3 = theme.bg2
+	end
+	if refs.statusStroke then
+		refs.statusStroke.Color = theme.accent
+	end
+	if refs.statusTitle then
+		refs.statusTitle.TextColor3 = theme.accent
+	end
+	if refs.statusLabel then
+		refs.statusLabel.TextColor3 = theme.text
+	end
+	if refs.reopenBtn then
+		refs.reopenBtn.BackgroundColor3 = theme.bg2
+		refs.reopenStroke.Color = theme.accent
+		refs.reopenBtn.TextColor3 = theme.text
+	end
+	if refs.closeBtn then
+		refs.closeBtn.BackgroundColor3 = theme.accent
+		refs.closeBtn.TextColor3 = theme.text
+	end
+	if refs.closeStroke then
+		refs.closeStroke.Color = theme.stroke
+	end
+	if refs.div1 then
+		refs.div1.BackgroundColor3 = theme.accent
+	end
+	if refs.divMid then
+		refs.divMid.BackgroundColor3 = theme.accent
+	end
+	if refs.divStatus then
+		refs.divStatus.BackgroundColor3 = theme.accent
+	end
+	if refs.titleAccent then
+		refs.titleAccent.BackgroundColor3 = theme.accent
+	end
+
+	for _, entry in ipairs(refs.sidePanels) do
+		if entry.frame then
+			entry.frame.BackgroundColor3 = theme.bg
+			entry.stroke.Color = theme.stroke
+			entry.grad.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, theme.bg2),
+				ColorSequenceKeypoint.new(1, theme.bg),
+			})
+			entry.head.BackgroundColor3 = theme.panelTop
+			entry.headStroke.Color = theme.accent
+			entry.headGrad.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, gradientTheme.top),
+				ColorSequenceKeypoint.new(1, gradientTheme.bottom),
+			})
+			entry.headLabel.TextColor3 = theme.text
+		end
+	end
+
+	for _, meta in ipairs(refs.modeButtons) do
+		setModeButtonState(meta, meta.active, meta.onLabel, meta.offLabel)
+	end
+
+	for _, meta in ipairs(refs.optionButtons) do
+		setOptButtonState(meta, meta.active)
+	end
+end
+
+local function applyUiMode()
+	resolvedUiMode = getResolvedUiMode()
+	local sizes = getUiSizes()
+
+	if refs.panel then
+		refs.panel.Size = UDim2.new(0, sizes.panelW, 0, sizes.panelH)
+		refs.panel.Position = UDim2.new(0, 16, 0.5, -math.floor(sizes.panelH / 2))
+	end
+	if refs.buttonScroll then
+		refs.buttonScroll.ScrollBarThickness = resolvedUiMode == "Phone" and 3 or 4
+	end
+	if refs.titleLabel then
+		refs.titleLabel.TextSize = sizes.titleSize
+	end
+	if refs.statusTitle then
+		refs.statusTitle.TextSize = sizes.statusSize
+	end
+	if refs.statusLabel then
+		refs.statusLabel.TextSize = sizes.statusSize + 1
+	end
+	if refs.reopenBtn then
+		refs.reopenBtn.Size = UDim2.new(0, resolvedUiMode == "PC" and 38 or 34, 0, resolvedUiMode == "PC" and 38 or 34)
+	end
+
+	for _, meta in ipairs(refs.modeButtons) do
+		meta.btn.Size = UDim2.new(1, 0, 0, sizes.buttonH)
+		meta.label.TextSize = sizes.buttonTextSize
+	end
+
+	for _, entry in ipairs(refs.sidePanels) do
+		if entry.frame then
+			entry.frame.Size = UDim2.new(0, sizes.sideW, 0, 0)
+		end
+	end
+end
+
+local function updateStatus()
+	local parts = {}
+	if vhsEnabled then table.insert(parts, "â VHS") end
+	if analogEnabled then table.insert(parts, "â AH") end
+	if urEnabled then table.insert(parts, "â UR") end
+	if untitledEnabled then table.insert(parts, "â UN") end
+	if pressureEnabled then table.insert(parts, "â PR") end
+	if bwEnabled then table.insert(parts, "â BW") end
+	if crtEnabled then table.insert(parts, "â CRT") end
+	if nightVisionEnabled then table.insert(parts, "â NV") end
+	if thermalEnabled then table.insert(parts, "â TH") end
+	if foundFootageEnabled then table.insert(parts, "â FF") end
+	if flashlightEnabled then table.insert(parts, "â FL") end
+	if motionBlurEnabled then table.insert(parts, "â MB") end
+	if guiHidden then table.insert(parts, "â UI") end
+	if not scriptEnabled then table.insert(parts, "â OFF") end
+	refs.statusLabel.Text = (#parts > 0) and table.concat(parts, "  ") or "None"
+end
+
+local function setMainPanelVisible(visible)
+	mainPanelVisible = visible
+	if refs.panel then
+		refs.panel.Visible = visible
+	end
+	for _, entry in ipairs(refs.sidePanels) do
+		if entry.keepOpenWhenPanelHidden then
+			entry.frame.Visible = visible and entry.isOpen or false
+		else
+			entry.frame.Visible = visible and entry.isOpen or false
+		end
+	end
+	if refs.reopenBtn then
+		refs.reopenBtn.Visible = not visible
+	end
+end
+
+local function closeAllSidePanels()
+	for _, entry in ipairs(refs.sidePanels) do
+		entry.isOpen = false
+		if entry.frame then
+			entry.frame.Visible = false
+		end
+	end
+end
+
+local function repositionAllSidePanels()
+	if not refs.panel then
+		return
+	end
+
+	local sizes = getUiSizes()
+	local panelAbsPos = refs.panel.AbsolutePosition
+	local panelAbsSize = refs.panel.AbsoluteSize
+	local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+
+	local startX = panelAbsPos.X + panelAbsSize.X + SIDE_GAP
+	local startY = panelAbsPos.Y
+	local currentX = startX
+	local currentY = startY
+	local stackedBelow = startX + sizes.sideW > viewport.X - 8
+
+	for _, entry in ipairs(refs.sidePanels) do
+		if entry.isOpen and entry.frame.Visible then
+			if stackedBelow then
+				entry.frame.Position = UDim2.new(0, panelAbsPos.X, 0, currentY + panelAbsSize.Y + SIDE_GAP)
+				currentY = currentY + entry.frame.AbsoluteSize.Y + SIDE_GAP
+			else
+				entry.frame.Position = UDim2.new(0, currentX, 0, startY)
+				currentX = currentX + entry.frame.AbsoluteSize.X + SIDE_GAP
+			end
+		end
+	end
+end
+
+local function makeSidePanel(titleText)
+	local sizes = getUiSizes()
+	local sp = Instance.new("Frame")
+	sp.Parent = mainGui
+	sp.Size = UDim2.new(0, sizes.sideW, 0, sizes.sideH)
+	sp.BackgroundColor3 = theme.bg
+	sp.BorderSizePixel = 0
+	sp.Visible = false
+	sp.ClipsDescendants = true
+	createCorner(sp, 12)
+	local spStroke = createStroke(sp, 1.5, theme.stroke)
+	local spGrad = Instance.new("UIGradient")
+	spGrad.Parent = sp
+	spGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, theme.bg2),
+		ColorSequenceKeypoint.new(1, theme.bg),
+	})
+	spGrad.Rotation = 135
+
+	local spHead = Instance.new("Frame")
+	spHead.Parent = sp
+	spHead.Size = UDim2.new(1, 0, 0, 28)
+	spHead.BackgroundColor3 = theme.panelTop
+	spHead.BorderSizePixel = 0
+	createCorner(spHead, 12)
+	local headStroke = createStroke(spHead, 1, theme.accent)
+
+	local headGrad = Instance.new("UIGradient")
+	headGrad.Parent = spHead
+	headGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, gradientTheme.top),
+		ColorSequenceKeypoint.new(1, gradientTheme.bottom),
+	})
+
+	local headLabel = Instance.new("TextLabel")
+	headLabel.Parent = spHead
+	headLabel.Size = UDim2.new(1, -10, 1, 0)
+	headLabel.Position = UDim2.new(0, 8, 0, 0)
+	headLabel.BackgroundTransparency = 1
+	headLabel.Text = titleText
+	headLabel.TextColor3 = theme.text
+	headLabel.TextSize = 11
+	headLabel.Font = Enum.Font.GothamBold
+	headLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+	local spScroll = Instance.new("ScrollingFrame")
+	spScroll.Parent = sp
+	spScroll.Size = UDim2.new(1, -12, 1, -38)
+	spScroll.Position = UDim2.new(0, 6, 0, 32)
+	spScroll.BackgroundTransparency = 1
+	spScroll.BorderSizePixel = 0
+	spScroll.ScrollBarThickness = 3
+	spScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	spScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	spScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	spScroll.ClipsDescendants = true
+
+	local padding = Instance.new("UIPadding")
+	padding.Parent = spScroll
+	padding.PaddingBottom = UDim.new(0, 8)
+
+	local layout = Instance.new("UIListLayout")
+	layout.Parent = spScroll
+	layout.Padding = UDim.new(0, 4)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	local entry = {
+		frame = sp,
+		stroke = spStroke,
+		grad = spGrad,
+		head = spHead,
+		headStroke = headStroke,
+		headGrad = headGrad,
+		headLabel = headLabel,
+		scroll = spScroll,
+		layout = layout,
+		isOpen = false,
+	}
+	table.insert(refs.sidePanels, entry)
+	return entry
+end
+
+local function openSidePanel(entry)
+	entry.isOpen = true
+	entry.frame.Visible = true
+	repositionAllSidePanels()
+end
+
+local function closeSidePanel(entry)
+	entry.isOpen = false
+	entry.frame.Visible = false
+	repositionAllSidePanels()
+end
+
+local function makeSectionLbl(parent, text, order)
+	local lbl = Instance.new("TextLabel")
+	lbl.Parent = parent
+	lbl.Size = UDim2.new(1, 0, 0, 16)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = text
+	lbl.TextColor3 = theme.accent
+	lbl.TextSize = 9
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.LayoutOrder = order
+	return lbl
+end
+
+local function applySelStyle(btns, selected)
+	for i, bb in ipairs(btns) do
+		bb.btn.BackgroundColor3 = (i == selected) and Color3.fromRGB(28, 20, 20) or theme.bg2
+		bb.stroke.Color = (i == selected) and theme.accent or Color3.fromRGB(55, 55, 55)
+		bb.btn.TextColor3 = (i == selected) and theme.text or theme.muted
+	end
+end
+
+local function makeSelectGroup(parent, sectionLabel, sectionOrder, items, default, onSelect)
+	makeSectionLbl(parent, sectionLabel, sectionOrder)
+	local selected = default
+	local btns = {}
+	for i, item in ipairs(items) do
+		local b = Instance.new("TextButton")
+		b.Parent = parent
+		b.Size = UDim2.new(1, 0, 0, 26)
+		b.BackgroundColor3 = theme.bg2
+		b.Text = item.label
+		b.TextColor3 = theme.muted
+		b.TextSize = 10
+		b.Font = Enum.Font.GothamSemibold
+		b.BorderSizePixel = 0
+		b.LayoutOrder = sectionOrder + i
+		b.AutoButtonColor = false
+		createCorner(b, 7)
+		local st = createStroke(b, 1, Color3.fromRGB(55, 55, 55))
+		btns[i] = { btn = b, stroke = st }
+		b.MouseButton1Click:Connect(function()
+			selected = i
+			applySelStyle(btns, selected)
+			onSelect(item.value, i)
+		end)
+	end
+	applySelStyle(btns, selected)
+	return btns
+end
+
+local function makeAdjuster(parent, label, order, valueGetter, valueSetter, minV, maxV, step)
+	local row = Instance.new("Frame")
+	row.Parent = parent
+	row.Size = UDim2.new(1, 0, 0, 28)
+	row.BackgroundTransparency = 1
+	row.LayoutOrder = order
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Parent = row
+	lbl.Size = UDim2.new(0.48, 0, 1, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = label
+	lbl.TextColor3 = theme.text
+	lbl.TextSize = 10
+	lbl.Font = Enum.Font.GothamSemibold
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+	local minus = Instance.new("TextButton")
+	minus.Parent = row
+	minus.Size = UDim2.new(0, 24, 0, 24)
+	minus.Position = UDim2.new(0.52, 0, 0.5, -12)
+	minus.BackgroundColor3 = theme.bg2
+	minus.Text = "-"
+	minus.TextColor3 = theme.text
+	minus.TextSize = 12
+	minus.Font = Enum.Font.GothamBold
+	minus.BorderSizePixel = 0
+	minus.AutoButtonColor = false
+	createCorner(minus, 6)
+	local minStroke = createStroke(minus, 1, theme.accent)
+
+	local valueLabel = Instance.new("TextLabel")
+	valueLabel.Parent = row
+	valueLabel.Size = UDim2.new(0.12, 0, 1, 0)
+	valueLabel.Position = UDim2.new(0.68, 0, 0, 0)
+	valueLabel.BackgroundTransparency = 1
+	valueLabel.TextColor3 = theme.muted
+	valueLabel.TextSize = 10
+	valueLabel.Font = Enum.Font.GothamSemibold
+	valueLabel.Text = tostring(roundNumber(valueGetter(), 2))
+
+	local plus = Instance.new("TextButton")
+	plus.Parent = row
+	plus.Size = UDim2.new(0, 24, 0, 24)
+	plus.Position = UDim2.new(0.82, 0, 0.5, -12)
+	plus.BackgroundColor3 = theme.bg2
+	plus.Text = "+"
+	plus.TextColor3 = theme.text
+	plus.TextSize = 12
+	plus.Font = Enum.Font.GothamBold
+	plus.BorderSizePixel = 0
+	plus.AutoButtonColor = false
+	createCorner(plus, 6)
+	local plusStroke = createStroke(plus, 1, theme.accent)
+
+	local function refresh()
+		valueLabel.Text = tostring(roundNumber(valueGetter(), 2))
+	end
+
+	minus.MouseButton1Click:Connect(function()
+		local v = clamp(valueGetter() - step, minV, maxV)
+		valueSetter(v)
+		refresh()
+	end)
+	plus.MouseButton1Click:Connect(function()
+		local v = clamp(valueGetter() + step, minV, maxV)
+		valueSetter(v)
+		refresh()
+	end)
+
+	table.insert(refs.optionButtons, {btn = minus, stroke = minStroke, active = false})
+	table.insert(refs.optionButtons, {btn = plus, stroke = plusStroke, active = false})
+
+	return {
+		refresh = refresh,
+		row = row,
+	}
+end
+
+local function refreshOptionButtonsTheme()
+	for _, meta in ipairs(refs.optionButtons) do
+		setOptButtonState(meta, meta.active)
+	end
+end
+
+-- ============================================================
+-- MAIN PANEL
+-- ============================================================
+local sizes = getUiSizes()
+
+local panel = Instance.new("Frame")
+panel.Name = "MainPanel"
+panel.Parent = mainGui
+panel.Size = UDim2.new(0, sizes.panelW, 0, sizes.panelH)
+panel.Position = PANEL_DEFAULT_POS
+panel.BackgroundColor3 = theme.bg
+panel.BorderSizePixel = 0
+panel.Active = true
+panel.Visible = true
+panel.ClipsDescendants = true
+createCorner(panel, 14)
+local panelStroke = createStroke(panel, 2, theme.stroke)
+local panelGrad = Instance.new("UIGradient")
+panelGrad.Parent = panel
+panelGrad.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, theme.bg2),
+	ColorSequenceKeypoint.new(1, theme.bg),
+})
+panelGrad.Rotation = 135
+
+refs.panel = panel
+refs.panelStroke = panelStroke
+refs.panelGrad = panelGrad
+
+local titleBar = Instance.new("Frame")
+titleBar.Parent = panel
+titleBar.Size = UDim2.new(1, 0, 0, 42)
+titleBar.BackgroundColor3 = theme.panelTop
+titleBar.BorderSizePixel = 0
+createCorner(titleBar, 14)
+
+local titleGrad = Instance.new("UIGradient")
+titleGrad.Parent = titleBar
+titleGrad.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, gradientTheme.top),
+	ColorSequenceKeypoint.new(1, gradientTheme.bottom),
+})
+titleGrad.Rotation = 0
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Parent = titleBar
+titleLabel.Size = UDim2.new(1, -62, 1, 0)
+titleLabel.Position = UDim2.new(0, 16, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "SHADER FX"
+titleLabel.TextColor3 = theme.text
+titleLabel.TextSize = sizes.titleSize
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local titleAccent = Instance.new("Frame")
+titleAccent.Parent = titleBar
+titleAccent.Size = UDim2.new(0, 3, 0, 22)
+titleAccent.Position = UDim2.new(0, 10, 0.5, -11)
+titleAccent.BackgroundColor3 = theme.accent
+titleAccent.BorderSizePixel = 0
+createCorner(titleAccent, 99)
+refs.titleAccent = titleAccent
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Parent = titleBar
+closeBtn.Size = UDim2.new(0, 26, 0, 26)
+closeBtn.Position = UDim2.new(1, -34, 0.5, -13)
+closeBtn.BackgroundColor3 = theme.accent
+closeBtn.Text = "â"
+closeBtn.TextColor3 = theme.text
+closeBtn.TextSize = 11
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.BorderSizePixel = 0
+closeBtn.AutoButtonColor = false
+createCorner(closeBtn, 6)
+local closeStroke = createStroke(closeBtn, 1, theme.stroke)
+
+refs.titleBar = titleBar
+refs.titleGrad = titleGrad
+refs.titleLabel = titleLabel
+refs.closeBtn = closeBtn
+refs.closeStroke = closeStroke
+
+local div1 = Instance.new("Frame")
+div1.Parent = panel
+div1.Size = UDim2.new(1, -24, 0, 1)
+div1.Position = UDim2.new(0, 12, 0, 42)
+div1.BackgroundColor3 = theme.accent
+div1.BorderSizePixel = 0
+refs.div1 = div1
+
+local buttonScroll = Instance.new("ScrollingFrame")
+buttonScroll.Parent = panel
+buttonScroll.Size = UDim2.new(1, -18, 1, -106)
+buttonScroll.Position = UDim2.new(0, 9, 0, 50)
+buttonScroll.BackgroundTransparency = 1
+buttonScroll.BorderSizePixel = 0
+buttonScroll.ScrollBarThickness = 4
+buttonScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+buttonScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+buttonScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+buttonScroll.ClipsDescendants = true
+
+refs.buttonScroll = buttonScroll
+
+local buttonPadding = Instance.new("UIPadding")
+buttonPadding.Parent = buttonScroll
+buttonPadding.PaddingBottom = UDim.new(0, 8)
+
+local buttonLayout = Instance.new("UIListLayout")
+buttonLayout.Parent = buttonScroll
+buttonLayout.Padding = UDim.new(0, 4)
+buttonLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local function makeModeEntry(btnMeta, onText, offText, kind)
+	btnMeta.onLabel = onText or btnMeta.baseLabel
+	btnMeta.offLabel = offText or btnMeta.baseLabel
+	btnMeta.kind = kind
+end
+
+local btnVHS = makeModeButton(buttonScroll, "VHS â¸", 1, Color3.fromRGB(220, 70, 70))
+makeModeEntry(btnVHS, "VHS â¸", "VHS â¸", "mode")
+local btnAH = makeModeButton(buttonScroll, "ANALOG HORROR â¸", 2, Color3.fromRGB(80, 190, 130))
+makeModeEntry(btnAH, "ANALOG HORROR â¸", "ANALOG HORROR â¸", "mode")
+local btnUR = makeModeButton(buttonScroll, "ULTRA REAL", 3, Color3.fromRGB(80, 170, 255))
+makeModeEntry(btnUR, "ULTRA REAL", "ULTRA REAL", "mode")
+local btnUntitled = makeModeButton(buttonScroll, "UNTITLED", 4, Color3.fromRGB(230, 180, 70))
+makeModeEntry(btnUntitled, "UNTITLED", "UNTITLED", "mode")
+local btnPressure = makeModeButton(buttonScroll, "PRESSURE", 5, Color3.fromRGB(170, 80, 255))
+makeModeEntry(btnPressure, "PRESSURE", "PRESSURE", "mode")
+local btnBW = makeModeButton(buttonScroll, "BLACK & WHITE", 6, Color3.fromRGB(240, 240, 240))
+makeModeEntry(btnBW, "BLACK & WHITE", "BLACK & WHITE", "mode")
+local btnCRT = makeModeButton(buttonScroll, "CRT", 7, Color3.fromRGB(120, 255, 140))
+makeModeEntry(btnCRT, "CRT", "CRT", "mode")
+local btnNV = makeModeButton(buttonScroll, "NIGHT VISION", 8, Color3.fromRGB(120, 255, 120))
+makeModeEntry(btnNV, "NIGHT VISION", "NIGHT VISION", "mode")
+local btnThermal = makeModeButton(buttonScroll, "THERMAL", 9, Color3.fromRGB(255, 150, 80))
+makeModeEntry(btnThermal, "THERMAL", "THERMAL", "mode")
+local btnFF = makeModeButton(buttonScroll, "FOUND FOOTAGE", 10, Color3.fromRGB(200, 200, 200))
+makeModeEntry(btnFF, "FOUND FOOTAGE", "FOUND FOOTAGE", "mode")
+
+local divMid = Instance.new("Frame")
+divMid.Parent = buttonScroll
+divMid.Size = UDim2.new(1, 0, 0, 1)
+divMid.BackgroundColor3 = theme.accent
+divMid.BorderSizePixel = 0
+divMid.LayoutOrder = 11
+refs.divMid = divMid
+
+local btnFL = makeModeButton(buttonScroll, "FLASHLIGHT â¸", 12, Color3.fromRGB(255, 210, 80))
+makeModeEntry(btnFL, "FLASHLIGHT â¸", "FLASHLIGHT â¸", "toggle")
+local btnMB = makeModeButton(buttonScroll, "MOTION BLUR â¸", 13, Color3.fromRGB(80, 210, 255))
+makeModeEntry(btnMB, "MOTION BLUR â¸", "MOTION BLUR â¸", "toggle")
+local btnSettings = makeModeButton(buttonScroll, "SETTINGS â¸", 14, Color3.fromRGB(255, 120, 200))
+makeModeEntry(btnSettings, "SETTINGS â¸", "SETTINGS â¸", "panel")
+local btnHideUI = makeModeButton(buttonScroll, "HIDE UI", 15, Color3.fromRGB(200, 120, 255))
+makeModeEntry(btnHideUI, "HIDE UI", "HIDE UI", "toggle")
+local btnToggle = makeModeButton(buttonScroll, "ENABLED", 16, Color3.fromRGB(80, 240, 120))
+makeModeEntry(btnToggle, "ENABLED", "DISABLED", "master")
+
+local divStatus = Instance.new("Frame")
+divStatus.Parent = panel
+divStatus.Size = UDim2.new(1, -24, 0, 1)
+divStatus.Position = UDim2.new(0, 12, 1, -62)
+divStatus.BackgroundColor3 = theme.accent
+divStatus.BorderSizePixel = 0
+refs.divStatus = divStatus
+
+local statusBox = Instance.new("Frame")
+statusBox.Parent = panel
+statusBox.Size = UDim2.new(1, -20, 0, 56)
+statusBox.Position = UDim2.new(0, 10, 1, -56)
+statusBox.BackgroundColor3 = theme.bg2
+statusBox.BorderSizePixel = 0
+createCorner(statusBox, 8)
+local statusStroke = createStroke(statusBox, 1, theme.accent)
+
+local statusTitle = Instance.new("TextLabel")
+statusTitle.Parent = statusBox
+statusTitle.Size = UDim2.new(1, 0, 0, 16)
+statusTitle.Position = UDim2.new(0, 8, 0, 4)
+statusTitle.BackgroundTransparency = 1
+statusTitle.Text = "ACTIVE"
+statusTitle.TextColor3 = theme.accent
+statusTitle.TextSize = 9
+statusTitle.Font = Enum.Font.GothamBold
+statusTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Parent = statusBox
+statusLabel.Size = UDim2.new(1, -12, 1, -20)
+statusLabel.Position = UDim2.new(0, 8, 0, 18)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "None"
+statusLabel.TextColor3 = theme.text
+statusLabel.TextSize = 10
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.TextYAlignment = Enum.TextYAlignment.Top
+statusLabel.TextWrapped = true
+
+refs.statusBox = statusBox
+refs.statusStroke = statusStroke
+refs.statusTitle = statusTitle
+refs.statusLabel = statusLabel
+
+local reopenBtn = Instance.new("TextButton")
+reopenBtn.Parent = controlGui
+reopenBtn.Size = UDim2.new(0, 38, 0, 38)
+reopenBtn.Position = UDim2.new(1, -48, 0, 10)
+reopenBtn.BackgroundColor3 = theme.bg2
+reopenBtn.Text = "â°"
+reopenBtn.TextColor3 = theme.text
+reopenBtn.TextSize = 18
+reopenBtn.Font = Enum.Font.GothamBold
+reopenBtn.BorderSizePixel = 0
+reopenBtn.AutoButtonColor = false
+reopenBtn.Visible = false
+createCorner(reopenBtn, 10)
+local reopenStroke = createStroke(reopenBtn, 2, theme.accent)
+
+refs.reopenBtn = reopenBtn
+refs.reopenStroke = reopenStroke
+
+-- ============================================================
+-- SIDE PANELS
+-- ============================================================
+local vhsPanel = makeSidePanel("ð¼ VHS")
+local ahPanel = makeSidePanel("ð· ANALOG HORROR")
+local flPanel = makeSidePanel("â¡ FLASHLIGHT")
+local mbPanel = makeSidePanel("â MOTION BLUR")
+local settingsPanel = makeSidePanel("â SETTINGS")
+
+local function refreshSidePanelSizes()
+	local sz = getUiSizes()
+	for _, entry in ipairs(refs.sidePanels) do
+		entry.frame.Size = UDim2.new(0, sz.sideW, 0, sz.sideH)
+	end
+end
+
+-- VHS
+makeSelectGroup(vhsPanel.scroll, "CONTRAST", 1, {
+	{ label = "Low", value = 0.25 },
+	{ label = "Mid", value = 0.55 },
+	{ label = "High", value = 0.80 },
+	{ label = "Max", value = 1.00 },
+}, 3, function(v)
+	vhsSettings.contrast = v
+	if vhsEnabled then
+		applyMode("VHS")
+	end
+end)
+makeSelectGroup(vhsPanel.scroll, "SATURATION", 10, {
+	{ label = "Washed", value = -0.5 },
+	{ label = "B&W", value = -1.0 },
+}, 2, function(v)
+	vhsSettings.saturation = v
+	if vhsEnabled then
+		applyMode("VHS")
+	end
+end)
+makeSelectGroup(vhsPanel.scroll, "EXPOSURE", 20, {
+	{ label = "Normal", value = -0.15 },
+	{ label = "Dark", value = -0.35 },
+	{ label = "Darker", value = -0.60 },
+}, 1, function(v)
+	vhsSettings.exposure = v
+	if vhsEnabled then
+		applyMode("VHS")
+	end
+end)
+
+-- Analog Horror
+makeSelectGroup(ahPanel.scroll, "CONTRAST", 1, {
+	{ label = "Flat", value = -0.20 },
+	{ label = "Normal", value = -0.10 },
+	{ label = "Mid", value = 0.10 },
+}, 2, function(v)
+	ahSettings.contrast = v
+	if analogEnabled then
+		applyMode("analog")
+	end
+end)
+makeSelectGroup(ahPanel.scroll, "SATURATION", 10, {
+	{ label = "Slight", value = -0.20 },
+	{ label = "Mid", value = -0.35 },
+	{ label = "Strong", value = -0.60 },
+	{ label = "B&W", value = -0.90 },
+}, 2, function(v)
+	ahSettings.saturation = v
+	if analogEnabled then
+		applyMode("analog")
+	end
+end)
+makeSelectGroup(ahPanel.scroll, "BLOOM", 20, {
+	{ label = "Subtle", value = 0.6 },
+	{ label = "Mid", value = 1.2 },
+	{ label = "Strong", value = 2.2 },
+	{ label = "Extreme", value = 3.8 },
+}, 2, function(v)
+	ahSettings.bloom = v
+	if analogEnabled then
+		applyMode("analog")
+	end
+end)
+
+-- Flashlight
+makeSelectGroup(flPanel.scroll, "BRIGHTNESS", 1, {
+	{ label = "Low", value = 2 },
+	{ label = "Mid-Low", value = 4 },
+	{ label = "Mid", value = 6 },
+	{ label = "High", value = 8 },
+	{ label = "Max", value = 10 },
+}, 3, function(v)
+	flSettings.brightness = v
+	applyFlSettings()
+end)
+makeSelectGroup(flPanel.scroll, "RANGE", 10, {
+	{ label = "Short", value = 30 },
+	{ label = "Mid", value = 60 },
+	{ label = "Long", value = 100 },
+	{ label = "Max", value = 150 },
+}, 2, function(v)
+	flSettings.range = v
+	applyFlSettings()
+end)
+makeSelectGroup(flPanel.scroll, "DELAY", 20, {
+	{ label = "None", value = 0.02 },
+	{ label = "Light", value = 0.2 },
+	{ label = "Mid", value = 0.45 },
+	{ label = "Heavy", value = 0.65 },
+	{ label = "Max", value = 0.85 },
+}, 2, function(v)
+	flSettings.heaviness = v
+end)
+
+makeSectionLbl(flPanel.scroll, "COLOR", 30)
+local colorRow = Instance.new("Frame")
+colorRow.Parent = flPanel.scroll
+colorRow.Size = UDim2.new(1, 0, 0, 26)
+colorRow.BackgroundTransparency = 1
+colorRow.LayoutOrder = 31
+local crLayout = Instance.new("UIListLayout")
+crLayout.Parent = colorRow
+crLayout.FillDirection = Enum.FillDirection.Horizontal
+crLayout.Padding = UDim.new(0, 4)
+crLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local colorPresets = {
+	Color3.fromRGB(255, 255, 255),
+	Color3.fromRGB(255, 220, 150),
+	Color3.fromRGB(150, 200, 255),
+	Color3.fromRGB(255, 80, 80),
+	Color3.fromRGB(80, 220, 130),
+}
+local selColor = 1
+local colorBtns = {}
+for i, col in ipairs(colorPresets) do
+	local btn = Instance.new("TextButton")
+	btn.Parent = colorRow
+	btn.Size = UDim2.new(0, 22, 0, 22)
+	btn.BackgroundColor3 = col
+	btn.Text = ""
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+	btn.LayoutOrder = i
+	createCorner(btn, 5)
+	local st = createStroke(btn, 1, Color3.fromRGB(255, 255, 255))
+	st.Thickness = (i == selColor) and 2 or 0
+	colorBtns[i] = { btn = btn, stroke = st }
+	btn.MouseButton1Click:Connect(function()
+		selColor = i
+		flSettings.color = col
+		for j, cb in ipairs(colorBtns) do
+			cb.stroke.Thickness = (j == i) and 2 or 0
+		end
+		applyFlSettings()
+	end)
+end
+
+local blendMeta = makeOptBtn(flPanel.scroll, "Blend Colors: OFF", 32)
+blendMeta.btn.MouseButton1Click:Connect(function()
+	flSettings.blendColors = not flSettings.blendColors
+	blendMeta.active = flSettings.blendColors
+	blendMeta.btn.Text = flSettings.blendColors and "Blend Colors: ON" or "Blend Colors: OFF"
+	setOptButtonState(blendMeta, blendMeta.active)
+	applyFlSettings()
+end)
+
+-- Motion Blur
+makeSelectGroup(mbPanel.scroll, "STRENGTH", 1, {
+	{ label = "Subtle", value = 5 },
+	{ label = "Low", value = 10 },
+	{ label = "Mid", value = 15 },
+	{ label = "High", value = 20 },
+	{ label = "Extreme", value = 28 },
+}, 3, function(v)
+	mbSettings.strength = v
+end)
+makeSelectGroup(mbPanel.scroll, "TRIGGERS AT", 10, {
+	{ label = "Any Move", value = 1 },
+	{ label = "Slow", value = 2 },
+	{ label = "Normal", value = 3 },
+	{ label = "Fast", value = 5 },
+	{ label = "Very Fast", value = 8 },
+}, 3, function(v)
+	mbSettings.speed = v
+end)
+
+-- Settings
+makeSelectGroup(settingsPanel.scroll, "DEVICE MODE", 1, {
+	{ label = "Auto", value = "Auto" },
+	{ label = "Phone", value = "Phone" },
+	{ label = "Tablet", value = "Tablet" },
+	{ label = "PC", value = "PC" },
+}, 1, function(v)
+	uiModeSetting = v
+	applyUiMode()
+	refreshSidePanelSizes()
+	repositionAllSidePanels()
+end)
+
+makeSelectGroup(settingsPanel.scroll, "THEME", 10, {
+	{ label = "Black / Red", value = "Black / Red" },
+	{ label = "Black / White", value = "Black / White" },
+	{ label = "Black / Purple", value = "Black / Purple" },
+	{ label = "Black / Blue", value = "Black / Blue" },
+}, 1, function(v)
+	themeName = v
+	applyTheme()
+end)
+
+makeSelectGroup(settingsPanel.scroll, "GRADIENT", 20, {
+	{ label = "Red / White", value = "Red / White" },
+	{ label = "White / Purple", value = "White / Purple" },
+	{ label = "Red / Black", value = "Red / Black" },
+	{ label = "White / Blue", value = "White / Blue" },
+}, 1, function(v)
+	gradientName = v
+	applyTheme()
+end)
+
+makeSelectGroup(settingsPanel.scroll, "CAMERA SHAKE", 30, {
+	{ label = "Off", value = "Off" },
+	{ label = "Low", value = "Low" },
+	{ label = "Medium", value = "Medium" },
+	{ label = "High", value = "High" },
+	{ label = "Extreme", value = "Extreme" },
+}, 3, function(v)
+	cameraShakePreset = v
+	cameraShakeEnabled = v ~= "Off"
+end)
+
+makeSelectGroup(settingsPanel.scroll, "GLOBAL LOOK", 40, {
+	{ label = "Reset", value = "Reset" },
+	{ label = "Soft", value = "Soft" },
+	{ label = "Bright", value = "Bright" },
+	{ label = "Dark", value = "Dark" },
+}, 1, function(v)
+	if v == "Reset" then
+		customAdjust.saturation = 0
+		customAdjust.contrast = 0
+		customAdjust.brightness = 0
+		customAdjust.bloom = 0
+		customAdjust.exposure = 0
+	elseif v == "Soft" then
+		customAdjust.saturation = -0.05
+		customAdjust.contrast = 0.05
+		customAdjust.brightness = 0.02
+		customAdjust.bloom = 0.10
+		customAdjust.exposure = 0
+	elseif v == "Bright" then
+		customAdjust.saturation = 0.05
+		customAdjust.contrast = 0.10
+		customAdjust.brightness = 0.12
+		customAdjust.bloom = 0.20
+		customAdjust.exposure = 0.08
+	elseif v == "Dark" then
+		customAdjust.saturation = -0.08
+		customAdjust.contrast = 0.12
+		customAdjust.brightness = -0.08
+		customAdjust.bloom = -0.05
+		customAdjust.exposure = -0.12
+	end
+	if currentMode ~= "Normal" then
+		applyMode(currentMode)
+	end
+end)
+
+local function makeAdjustRow(label, order, getter, setter, minV, maxV, step)
+	local row = makeAdjuster(settingsPanel.scroll, label, order, getter, setter, minV, maxV, step)
+	return row
+end
+
+makeAdjustRow("SATURATION", 50, function() return customAdjust.saturation end, function(v)
+	customAdjust.saturation = v
+	if currentMode ~= "Normal" then applyMode(currentMode) end
+end, -1, 1, 0.05)
+
+makeAdjustRow("CONTRAST", 60, function() return customAdjust.contrast end, function(v)
+	customAdjust.contrast = v
+	if currentMode ~= "Normal" then applyMode(currentMode) end
+end, -1, 1, 0.05)
+
+makeAdjustRow("BRIGHTNESS", 70, function() return customAdjust.brightness end, function(v)
+	customAdjust.brightness = v
+	if currentMode ~= "Normal" then applyMode(currentMode) end
+end, -1, 1, 0.05)
+
+makeAdjustRow("BLOOM", 80, function() return customAdjust.bloom end, function(v)
+	customAdjust.bloom = v
+	if currentMode ~= "Normal" then applyMode(currentMode) end
+end, -1, 2, 0.05)
+
+makeAdjustRow("EXPOSURE", 90, function() return customAdjust.exposure end, function(v)
+	customAdjust.exposure = v
+	if currentMode ~= "Normal" then applyMode(currentMode) end
+end, -1, 1, 0.05)
+
+-- ============================================================
+-- BUTTON LOGIC
+-- ============================================================
+local function setModeButtonVisual(meta, active)
+	setModeButtonState(meta, active, meta.onLabel, meta.offLabel)
+end
+
+local function setSingleMode(mode, btnMeta, sidePanelEntry)
+	if not scriptEnabled then
+		return
+	end
+
+	local wasOn = (currentMode == mode)
+
+	closeAllSidePanels()
+
+	if wasOn then
+		applyMode("Normal")
+		if btnMeta then
+			setModeButtonVisual(btnMeta, false)
+		end
+		return
+	end
+
+	applyMode(mode)
+	if btnMeta then
+		setModeButtonVisual(btnMeta, true)
+	end
+	if sidePanelEntry then
+		openSidePanel(sidePanelEntry)
+	end
+	updateStatus()
+end
+
+local function clearEffectModeButtons()
+	setModeButtonVisual(btnVHS, false)
+	setModeButtonVisual(btnAH, false)
+	setModeButtonVisual(btnUR, false)
+	setModeButtonVisual(btnUntitled, false)
+	setModeButtonVisual(btnPressure, false)
+	setModeButtonVisual(btnBW, false)
+	setModeButtonVisual(btnCRT, false)
+	setModeButtonVisual(btnNV, false)
+	setModeButtonVisual(btnThermal, false)
+	setModeButtonVisual(btnFF, false)
+end
+
+local function refreshEffectButtons()
+	clearEffectModeButtons()
+	if currentMode == "VHS" then
+		setModeButtonVisual(btnVHS, true)
+	elseif currentMode == "analog" then
+		setModeButtonVisual(btnAH, true)
+	elseif currentMode == "UR" then
+		setModeButtonVisual(btnUR, true)
+	elseif currentMode == "untitled" then
+		setModeButtonVisual(btnUntitled, true)
+	elseif currentMode == "pressure" then
+		setModeButtonVisual(btnPressure, true)
+	elseif currentMode == "bw" then
+		setModeButtonVisual(btnBW, true)
+	elseif currentMode == "crt" then
+		setModeButtonVisual(btnCRT, true)
+	elseif currentMode == "nightVision" then
+		setModeButtonVisual(btnNV, true)
+	elseif currentMode == "thermal" then
+		setModeButtonVisual(btnThermal, true)
+	elseif currentMode == "foundFootage" then
+		setModeButtonVisual(btnFF, true)
+	end
+end
+
+btnVHS.btn.MouseButton1Click:Connect(function()
+	if currentMode == "VHS" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("VHS")
+		openSidePanel(vhsPanel)
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnAH.btn.MouseButton1Click:Connect(function()
+	if currentMode == "analog" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("analog")
+		openSidePanel(ahPanel)
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnUR.btn.MouseButton1Click:Connect(function()
+	if currentMode == "UR" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("UR")
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnUntitled.btn.MouseButton1Click:Connect(function()
+	if currentMode == "untitled" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("untitled")
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnPressure.btn.MouseButton1Click:Connect(function()
+	if currentMode == "pressure" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("pressure")
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnBW.btn.MouseButton1Click:Connect(function()
+	if currentMode == "bw" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("bw")
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnCRT.btn.MouseButton1Click:Connect(function()
+	if currentMode == "crt" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("crt")
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnNV.btn.MouseButton1Click:Connect(function()
+	if currentMode == "nightVision" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("nightVision")
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnThermal.btn.MouseButton1Click:Connect(function()
+	if currentMode == "thermal" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("thermal")
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnFF.btn.MouseButton1Click:Connect(function()
+	if currentMode == "foundFootage" then
+		closeAllSidePanels()
+		applyMode("Normal")
+	else
+		closeAllSidePanels()
+		applyMode("foundFootage")
+	end
+	refreshEffectButtons()
+	updateStatus()
+end)
+
+btnFL.btn.MouseButton1Click:Connect(function()
+	flashlightEnabled = not flashlightEnabled
+	fl.Enabled = flashlightEnabled
+	setModeButtonState(btnFL, flashlightEnabled, "FLASHLIGHT â¸", "FLASHLIGHT â¸")
+	if flashlightEnabled then
+		applyFlSettings()
+		openSidePanel(flPanel)
+	else
+		closeSidePanel(flPanel)
+	end
+	updateStatus()
+end)
+
+btnMB.btn.MouseButton1Click:Connect(function()
+	motionBlurEnabled = not motionBlurEnabled
+	if not motionBlurEnabled then
+		motionBlur.Size = 0
+	end
+	setModeButtonState(btnMB, motionBlurEnabled, "MOTION BLUR â¸", "MOTION BLUR â¸")
+	if motionBlurEnabled then
+		openSidePanel(mbPanel)
+	else
+		closeSidePanel(mbPanel)
+	end
+	updateStatus()
+end)
+
+btnSettings.btn.MouseButton1Click:Connect(function()
+	if settingsPanel.isOpen then
+		closeSidePanel(settingsPanel)
+		setModeButtonState(btnSettings, false, "SETTINGS â¸", "SETTINGS â¸")
+	else
+		openSidePanel(settingsPanel)
+		setModeButtonState(btnSettings, true, "SETTINGS â¸", "SETTINGS â¸")
+	end
+	updateStatus()
+end)
+
+btnHideUI.btn.MouseButton1Click:Connect(function()
+	guiHidden = not guiHidden
+	setMainPanelVisible(not guiHidden)
+	setModeButtonState(btnHideUI, guiHidden, "HIDE UI", "HIDE UI")
+	updateStatus()
+end)
+
+btnToggle.btn.MouseButton1Click:Connect(function()
+	scriptEnabled = not scriptEnabled
+	if not scriptEnabled then
+		currentMode = "Normal"
+		applyMode("Normal")
+		flashlightEnabled = false
+		fl.Enabled = false
+		motionBlurEnabled = false
+		motionBlur.Size = 0
+		closeAllSidePanels()
+		setModeButtonVisual(btnVHS, false)
+		setModeButtonVisual(btnAH, false)
+		setModeButtonVisual(btnUR, false)
+		setModeButtonVisual(btnUntitled, false)
+		setModeButtonVisual(btnPressure, false)
+		setModeButtonVisual(btnBW, false)
+		setModeButtonVisual(btnCRT, false)
+		setModeButtonVisual(btnNV, false)
+		setModeButtonVisual(btnThermal, false)
+		setModeButtonVisual(btnFF, false)
+		setModeButtonState(btnFL, false, "FLASHLIGHT â¸", "FLASHLIGHT â¸")
+		setModeButtonState(btnMB, false, "MOTION BLUR â¸", "MOTION BLUR â¸")
+		setModeButtonState(btnSettings, false, "SETTINGS â¸", "SETTINGS â¸")
+		setModeButtonState(btnToggle, false, "ENABLED", "DISABLED")
+	else
+		applyMode("Normal")
+		setModeButtonState(btnToggle, true, "ENABLED", "DISABLED")
+	end
+	updateStatus()
+end)
+
+-- close / reopen
+closeBtn.MouseButton1Click:Connect(function()
+	setMainPanelVisible(false)
+end)
+
+reopenBtn.MouseButton1Click:Connect(function()
+	setMainPanelVisible(true)
+	repositionAllSidePanels()
+end)
+
+-- ============================================================
+-- DRAG
+-- ============================================================
+local dragging = false
+local dragStart = nil
+local startPos = nil
+
+titleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = panel.Position
+	end
+end)
+
+titleBar.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if not dragging then
+		return
+	end
+
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		local delta = input.Position - dragStart
+		panel.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+		repositionAllSidePanels()
+	end
+end)
+
+-- ============================================================
+-- INPUT KEYS
+-- ============================================================
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then
+		return
+	end
+	if input.UserInputType ~= Enum.UserInputType.Keyboard then
+		return
+	end
+
+	if input.KeyCode == Enum.KeyCode.C then
+		setMainPanelVisible(false)
+	elseif input.KeyCode == Enum.KeyCode.P then
+		if resolvedUiMode == "PC" then
+			setMainPanelVisible(not mainPanelVisible)
+			repositionAllSidePanels()
+		end
+	end
+end)
+
+-- ============================================================
+-- RESIZE / APPLY
+-- ============================================================
+local function refreshAllUi()
+	applyUiMode()
+	applyTheme()
+	refreshSidePanelSizes()
+	refreshOptionButtonsTheme()
+	refreshEffectButtons()
+	updateStatus()
+end
+
+player.CharacterAdded:Connect(function(newCharacter)
+	character = newCharacter
+end)
+
+if workspace.CurrentCamera then
+	camera = workspace.CurrentCamera
+end
+
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	camera = workspace.CurrentCamera or camera
+end)
+
+-- ============================================================
+-- INITIAL STATE
+-- ============================================================
+applyUiMode()
+applyTheme()
+refreshSidePanelSizes()
+applyFlSettings()
+applyMode("Normal")
+refreshEffectButtons()
+setMainPanelVisible(true)
+updateStatus()
+
+-- Ensure the settings button is not highlighted at start
+setModeButtonState(btnSettings, false, "SETTINGS â¸", "SETTINGS â¸")
+setModeButtonState(btnFL, false, "FLASHLIGHT â¸", "FLASHLIGHT â¸")
+setModeButtonState(btnMB, false, "MOTION BLUR â¸", "MOTION BLUR â¸")
+setModeButtonState(btnHideUI, false, "HIDE UI", "HIDE UI")
+setModeButtonState(btnToggle, true, "ENABLED", "DISABLED")
+applyTheme()
+refreshSidePanelSizes()
+repositionAllSidePanels()
+
+-- ============================================================
+-- RENDER LOOP
+-- ============================================================
+local prevCamCF = camera.CFrame
+local smoothFlCFrame = CFrame.new()
+local scanlineTimer = 0
+
+local function refreshScanlines()
+	local viewport = (camera and camera.ViewportSize) or Vector2.new(1280, 720)
+	local spacing = math.max(4, math.floor(viewport.Y / #scanlineBars))
+	local offset = math.floor((tick() * 20) % spacing)
+
+	for i, bar in ipairs(scanlineBars) do
+		bar.Size = UDim2.new(1, 0, 0, 1)
+		bar.Position = UDim2.new(0, 0, 0, ((i - 1) * spacing + offset) % viewport.Y)
+	end
+end
+
+RunService.RenderStepped:Connect(function(dt)
+	if not camera then
+		camera = workspace.CurrentCamera
+		if not camera then
+			return
+		end
+	end
+
+	if scriptEnabled and cameraShakeEnabled then
+		camera.CFrame = camera.CFrame * getWalkShake(dt)
+	end
+
+	if motionBlurEnabled then
+		local diff = math.deg(math.acos(clamp(prevCamCF.LookVector:Dot(camera.CFrame.LookVector), -1, 1)))
+		local trigger = mbSettings.speed
+		local ratio = clamp((diff - trigger) / trigger, 0, 1)
+		motionBlur.Size = motionBlur.Size + (ratio * mbSettings.strength - motionBlur.Size) * 0.25
+	else
+		motionBlur.Size = 0
+	end
+
+	prevCamCF = camera.CFrame
+
+	if flashlightEnabled then
+		local lerpSpeed = clamp((1 - flSettings.heaviness) * 14, 0.5, 14)
+		smoothFlCFrame = smoothFlCFrame:Lerp(camera.CFrame, dt * lerpSpeed)
+		lightPart.CFrame = smoothFlCFrame
+	end
+
+	if effectGui.Enabled then
+		if currentMode == "VHS" or currentMode == "analog" or currentMode == "crt" or currentMode == "foundFootage" then
+			scanlineTimer = scanlineTimer + dt
+			if scanlineTimer >= 0.10 then
+				scanlineTimer = 0
+				refreshScanlines()
+			end
+		end
+
+		if currentMode == "analog" or currentMode == "crt" then
+			local drift = math.sin(tick() * 2) * 1.5
+			chromaRed.Position = UDim2.new(0, -2 + drift, 0, 0)
+			chromaBlue.Position = UDim2.new(0, 2 - drift, 0, 0)
+		end
+
+		if currentMode == "bw" then
+			bwGlow.BackgroundTransparency = 0.94 + math.sin(tick() * 2) * 0.01
+		end
+
+		if currentMode == "pressure" then
+			pressureTint.BackgroundTransparency = 0.64 + math.sin(tick() * 1.5) * 0.02
+		end
+	end
+end)
+
+-- Re-apply layout when the viewport changes
+camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+	refreshSidePanelSizes()
+	repositionAllSidePanels()
+	if effectGui.Enabled then
+		refreshScanlines()
+	end
+end)
+
+-- Start with buttons visually correct
+refreshEffectButtons()
+updateStatus()
+
+-- ============================================================
+-- V9 ADD-ON: save profiles, view bobbing, pressure fix, B&W controls
+-- ============================================================
+local profileStorageFolder = "ShaderFXProfiles"
+local autoProfileName = "autosave"
+local profileDirty = false
+local autoSaveReady = false
+local isLoadingProfile = false
+local viewBobbingEnabled = false
+local viewBobbingIntensity = 0.35
+local bwBrightness = 0.12
+local bwContrast = 0.18
+local pressureIntensity = 1
+local savedProfiles = {}
+
+local profileNameBox
+local saveProfileButton
+local loadProfileButton
+local viewBobbingToggleButton
+local bwBrightnessButton = nil
+local bwContrastButton = nil
+local pressureIntensityButton = nil
+local pendingProfileName = autoProfileName
+
+local function sanitizeProfileName(name)
+	name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	name = name:gsub("[^%w%-%_ ]", "_")
+	if name == "" then
+		name = autoProfileName
+	end
+	return name
+end
+
+local function buildProfileData()
+	return {
+		version = 1,
+		currentMode = currentMode,
+		scriptEnabled = scriptEnabled,
+		guiHidden = guiHidden,
+		uiModeSetting = uiModeSetting,
+		themeName = themeName,
+		gradientName = gradientName,
+		cameraShakePreset = cameraShakePreset,
+		cameraShakeEnabled = cameraShakeEnabled,
+		viewBobbingEnabled = viewBobbingEnabled,
+		viewBobbingIntensity = viewBobbingIntensity,
+		bwBrightness = bwBrightness,
+		bwContrast = bwContrast,
+		pressureIntensity = pressureIntensity,
+		flashlightEnabled = flashlightEnabled,
+		motionBlurEnabled = motionBlurEnabled,
+		flSettings = {
+			brightness = flSettings.brightness,
+			heaviness = flSettings.heaviness,
+			color = { R = flSettings.color.R, G = flSettings.color.G, B = flSettings.color.B },
+			blendColors = flSettings.blendColors,
+			range = flSettings.range,
+		},
+		mbSettings = {
+			strength = mbSettings.strength,
+			speed = mbSettings.speed,
+		},
+		vhsSettings = {
+			contrast = vhsSettings.contrast,
+			saturation = vhsSettings.saturation,
+			exposure = vhsSettings.exposure,
+		},
+		ahSettings = {
+			contrast = ahSettings.contrast,
+			saturation = ahSettings.saturation,
+			bloom = ahSettings.bloom,
+		},
+		customAdjust = {
+			saturation = customAdjust.saturation,
+			contrast = customAdjust.contrast,
+			brightness = customAdjust.brightness,
+			bloom = customAdjust.bloom,
+			exposure = customAdjust.exposure,
+		},
+	}
+end
+
+local function saveProfile(profileName)
+	profileName = sanitizeProfileName(profileName)
+	local json = HttpService:JSONEncode(buildProfileData())
+
+	if type(writefile) == "function" and type(isfolder) == "function" and type(makefolder) == "function" then
+		pcall(function()
+			if not isfolder(profileStorageFolder) then
+				makefolder(profileStorageFolder)
+			end
+			writefile(profileStorageFolder .. "/" .. profileName .. ".json", json)
+		end)
+	else
+		savedProfiles[profileName] = json
+	end
+end
+
+local function loadProfile(profileName)
+	profileName = sanitizeProfileName(profileName)
+	local json
+
+	if type(readfile) == "function" and type(isfile) == "function" then
+		local ok, result = pcall(function()
+			if isfile(profileStorageFolder .. "/" .. profileName .. ".json") then
+				return readfile(profileStorageFolder .. "/" .. profileName .. ".json")
+			end
+		end)
+		if ok then
+			json = result
+		end
+	end
+
+	if not json and savedProfiles[profileName] then
+		json = savedProfiles[profileName]
+	end
+
+	if not json then
+		return false
+	end
+
+	local ok, data = pcall(function()
+		return HttpService:JSONDecode(json)
+	end)
+	if not ok or type(data) ~= "table" then
+		return false
+	end
+
+	isLoadingProfile = true
+
+	currentMode = data.currentMode or "Normal"
+	scriptEnabled = data.scriptEnabled ~= false
+	guiHidden = data.guiHidden == true
+	uiModeSetting = data.uiModeSetting or uiModeSetting or "Auto"
+	themeName = data.themeName or themeName
+	gradientName = data.gradientName or gradientName
+	cameraShakePreset = data.cameraShakePreset or cameraShakePreset
+	cameraShakeEnabled = data.cameraShakeEnabled ~= false and cameraShakePreset ~= "Off"
+	viewBobbingEnabled = data.viewBobbingEnabled == true
+	viewBobbingIntensity = tonumber(data.viewBobbingIntensity) or viewBobbingIntensity
+	bwBrightness = tonumber(data.bwBrightness) or bwBrightness
+	bwContrast = tonumber(data.bwContrast) or bwContrast
+	pressureIntensity = tonumber(data.pressureIntensity) or pressureIntensity
+	flashlightEnabled = data.flashlightEnabled == true
+	motionBlurEnabled = data.motionBlurEnabled == true
+
+	if type(data.customAdjust) == "table" then
+		customAdjust.saturation = tonumber(data.customAdjust.saturation) or customAdjust.saturation
+		customAdjust.contrast = tonumber(data.customAdjust.contrast) or customAdjust.contrast
+		customAdjust.brightness = tonumber(data.customAdjust.brightness) or customAdjust.brightness
+		customAdjust.bloom = tonumber(data.customAdjust.bloom) or customAdjust.bloom
+		customAdjust.exposure = tonumber(data.customAdjust.exposure) or customAdjust.exposure
+	end
+
+	if type(data.flSettings) == "table" then
+		flSettings.brightness = tonumber(data.flSettings.brightness) or flSettings.brightness
+		flSettings.heaviness = tonumber(data.flSettings.heaviness) or flSettings.heaviness
+		flSettings.range = tonumber(data.flSettings.range) or flSettings.range
+		flSettings.blendColors = data.flSettings.blendColors == true
+		if type(data.flSettings.color) == "table" then
+			local r = clamp(tonumber(data.flSettings.color.R) or 255, 0, 255)
+			local g = clamp(tonumber(data.flSettings.color.G) or 255, 0, 255)
+			local b = clamp(tonumber(data.flSettings.color.B) or 255, 0, 255)
+			flSettings.color = Color3.fromRGB(r, g, b)
+		end
+	end
+
+	if type(data.mbSettings) == "table" then
+		mbSettings.strength = tonumber(data.mbSettings.strength) or mbSettings.strength
+		mbSettings.speed = tonumber(data.mbSettings.speed) or mbSettings.speed
+	end
+
+	if type(data.vhsSettings) == "table" then
+		vhsSettings.contrast = tonumber(data.vhsSettings.contrast) or vhsSettings.contrast
+		vhsSettings.saturation = tonumber(data.vhsSettings.saturation) or vhsSettings.saturation
+		vhsSettings.exposure = tonumber(data.vhsSettings.exposure) or vhsSettings.exposure
+	end
+
+	if type(data.ahSettings) == "table" then
+		ahSettings.contrast = tonumber(data.ahSettings.contrast) or ahSettings.contrast
+		ahSettings.saturation = tonumber(data.ahSettings.saturation) or ahSettings.saturation
+		ahSettings.bloom = tonumber(data.ahSettings.bloom) or ahSettings.bloom
+	end
+
+	applyUiMode()
+	applyTheme()
+	refreshSidePanelSizes()
+	applyFlSettings()
+	applyMode(currentMode)
+	refreshEffectButtons()
+
+	setMainPanelVisible(true)
+	if guiHidden then
+		toggleGuiVisibility(true)
+	end
+
+	setModeButtonState(btnHideUI, guiHidden, "HIDE UI", "HIDE UI")
+	setModeButtonState(btnToggle, scriptEnabled, "ENABLED", "DISABLED")
+	setModeButtonState(btnFL, flashlightEnabled, "FLASHLIGHT â¸", "FLASHLIGHT â¸")
+	setModeButtonState(btnMB, motionBlurEnabled, "MOTION BLUR â¸", "MOTION BLUR â¸")
+	updateStatus()
+
+	isLoadingProfile = false
+	profileDirty = false
+	return true
+end
+
+local oldApplyLighting = applyLighting
+applyLighting = function(mode)
+	oldApplyLighting(mode)
+	local cc, bloom = getEffects()
+
+	if mode == "pressure" then
+		pressureTint.Visible = true
+		pressureTint.BackgroundColor3 = Color3.fromRGB(55, 10, 10)
+		pressureTint.BackgroundTransparency = 0.75 - (pressureIntensity * 0.06)
+		cc.TintColor = Color3.fromRGB(140, 35, 35)
+		cc.Saturation = -0.75
+		cc.Contrast = 0.62 + (pressureIntensity * 0.10)
+		cc.Brightness = -0.20 - (pressureIntensity * 0.07)
+		Lighting.ExposureCompensation = -0.90 - (pressureIntensity * 0.12)
+		bloom.Intensity = 0.85 + (pressureIntensity * 0.15)
+		bwGlow.Visible = false
+	elseif mode == "bw" then
+		bwGlow.Visible = true
+		bwGlow.BackgroundTransparency = 0.95 - (bwBrightness * 0.02)
+		cc.TintColor = Color3.fromRGB(255, 255, 255)
+		cc.Saturation = -1
+		cc.Contrast = 0.95 + bwContrast
+		cc.Brightness = 0.18 + bwBrightness
+		Lighting.ExposureCompensation = 0.12
+		bloom.Intensity = 0.10
+	end
+end
+
+getWalkShake = function(dt)
+	if (not cameraShakeEnabled or cameraShakePreset == "Off") and not viewBobbingEnabled then
+		return CFrame.new()
+	end
+
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not rootPart then
+		return CFrame.new()
+	end
+
+	local vel = rootPart.AssemblyLinearVelocity
+	local speed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+	local moving = speed > 0.8 and humanoid.FloorMaterial ~= Enum.Material.Air
+
+	shakeTime = shakeTime + dt * (moving and (7 + speed * 0.18) or 1.8)
+
+	local baseAmp = shakePresets[cameraShakePreset] or 0
+	local bobAmp = viewBobbingEnabled and clamp(viewBobbingIntensity, 0, 1) or 0
+	local amplitude = baseAmp + (bobAmp * 0.012)
+
+	if not moving then
+		local breatheY = math.sin(shakeTime * 1.15) * (0.010 + bobAmp * 0.010)
+		local breatheX = math.sin(shakeTime * 0.8) * (0.006 + bobAmp * 0.004)
+		return CFrame.new(breatheX, breatheY, 0)
+	end
+
+	local x = math.sin(shakeTime * 6.3) * (0.010 + amplitude)
+	local y = math.abs(math.sin(shakeTime * 9.0)) * (0.016 + amplitude * 1.7)
+	local z = math.sin(shakeTime * 4.2) * (0.008 + amplitude * 0.8)
+	local roll = math.sin(shakeTime * 5.0) * math.rad(0.25 + (amplitude * 55))
+
+	return CFrame.new(x, -y, z) * CFrame.Angles(0, 0, roll)
+end
+
+local hiddenSnapshots = {}
+
+local function isShaderProtectedInstance(obj)
+	if not obj then
+		return false
+	end
+	return obj:IsDescendantOf(mainGui)
+		or obj:IsDescendantOf(controlGui)
+		or obj:IsDescendantOf(effectGui)
+end
+
+toggleGuiVisibility = function(hide)
+	local roots = { playerGui, workspace, CoreGui }
+
+	if hide then
+		for _, root in ipairs(roots) do
+			if root then
+				for _, obj in ipairs(root:GetDescendants()) do
+					if isShaderProtectedInstance(obj) then
+						continue
+					end
+
+					if obj:IsA("ScreenGui") then
+						hiddenSnapshots[obj] = hiddenSnapshots[obj] or { enabled = obj.Enabled }
+						obj.Enabled = false
+					elseif obj:IsA("SurfaceGui") then
+						hiddenSnapshots[obj] = hiddenSnapshots[obj] or { enabled = obj.Enabled }
+						obj.Enabled = false
+					elseif obj:IsA("GuiObject") then
+						hiddenSnapshots[obj] = hiddenSnapshots[obj] or {
+							bg = obj.BackgroundTransparency,
+							txt = (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.TextTransparency or nil,
+							img = (obj:IsA("ImageLabel") or obj:IsA("ImageButton")) and obj.ImageTransparency or nil,
+						}
+						obj.BackgroundTransparency = 1
+						if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+							obj.TextTransparency = 1
+						end
+						if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+							obj.ImageTransparency = 1
+						end
+					elseif obj:IsA("UIStroke") then
+						hiddenSnapshots[obj] = hiddenSnapshots[obj] or { thickness = obj.Thickness }
+						obj.Thickness = 0
+					elseif obj:IsA("Highlight") then
+						hiddenSnapshots[obj] = hiddenSnapshots[obj] or {
+							fill = obj.FillTransparency,
+							outline = obj.OutlineTransparency,
+						}
+						obj.FillTransparency = 1
+						obj.OutlineTransparency = 1
+					end
+				end
+			end
+		end
+	else
+		for obj, data in pairs(hiddenSnapshots) do
+			if obj and obj.Parent then
+				if obj:IsA("UIStroke") then
+					obj.Thickness = data.thickness or obj.Thickness
+				elseif obj:IsA("ScreenGui") or obj:IsA("SurfaceGui") then
+					obj.Enabled = data.enabled ~= false
+				elseif obj:IsA("Highlight") then
+					obj.FillTransparency = data.fill or obj.FillTransparency
+					obj.OutlineTransparency = data.outline or obj.OutlineTransparency
+				else
+					obj.BackgroundTransparency = data.bg or obj.BackgroundTransparency
+					if data.txt ~= nil then
+						obj.TextTransparency = data.txt
+					end
+					if data.img ~= nil then
+						obj.ImageTransparency = data.img
+					end
+				end
+			end
+		end
+		hiddenSnapshots = {}
+	end
+end
+
+updateStatus = function()
+	local parts = {}
+	if vhsEnabled then table.insert(parts, "â VHS") end
+	if analogEnabled then table.insert(parts, "â AH") end
+	if urEnabled then table.insert(parts, "â UR") end
+	if untitledEnabled then table.insert(parts, "â UN") end
+	if pressureEnabled then table.insert(parts, "â PR") end
+	if bwEnabled then table.insert(parts, "â BW") end
+	if crtEnabled then table.insert(parts, "â CRT") end
+	if nightVisionEnabled then table.insert(parts, "â NV") end
+	if thermalEnabled then table.insert(parts, "â TH") end
+	if foundFootageEnabled then table.insert(parts, "â FF") end
+	if flashlightEnabled then table.insert(parts, "â FL") end
+	if motionBlurEnabled then table.insert(parts, "â MB") end
+	if guiHidden then table.insert(parts, "â UI") end
+	if not scriptEnabled then table.insert(parts, "â OFF") end
+	refs.statusLabel.Text = (#parts > 0) and table.concat(parts, "  ") or "None"
+	if autoSaveReady and profileDirty and not isLoadingProfile then
+		saveProfile(autoProfileName)
+		profileDirty = false
+	end
+end
+
+makeSectionLbl(settingsPanel.scroll, "VIEW BOBBING (V9)", 114)
+profileNameBox = Instance.new("TextBox")
+profileNameBox.Parent = settingsPanel.scroll
+profileNameBox.Size = UDim2.new(1, 0, 0, 26)
+profileNameBox.BackgroundColor3 = theme.bg2
+profileNameBox.TextColor3 = theme.text
+profileNameBox.Text = autoProfileName
+profileNameBox.PlaceholderText = "autosave"
+profileNameBox.ClearTextOnFocus = false
+profileNameBox.Font = Enum.Font.GothamSemibold
+profileNameBox.TextSize = 10
+profileNameBox.BorderSizePixel = 0
+profileNameBox.LayoutOrder = 115
+Instance.new("UICorner", profileNameBox).CornerRadius = UDim.new(0, 7)
+createStroke(profileNameBox, 1, theme.accent)
+
+saveProfileButton = Instance.new("TextButton")
+saveProfileButton.Parent = settingsPanel.scroll
+saveProfileButton.Size = UDim2.new(0.5, -3, 0, 26)
+saveProfileButton.BackgroundColor3 = theme.bg2
+saveProfileButton.Text = "SAVE PROFILE"
+saveProfileButton.TextColor3 = theme.text
+saveProfileButton.TextSize = 10
+saveProfileButton.Font = Enum.Font.GothamBold
+saveProfileButton.BorderSizePixel = 0
+saveProfileButton.AutoButtonColor = false
+saveProfileButton.LayoutOrder = 116
+Instance.new("UICorner", saveProfileButton).CornerRadius = UDim.new(0, 7)
+createStroke(saveProfileButton, 1, theme.accent)
+
+loadProfileButton = Instance.new("TextButton")
+loadProfileButton.Parent = settingsPanel.scroll
+loadProfileButton.Size = UDim2.new(0.5, -3, 0, 26)
+loadProfileButton.Position = UDim2.new(0.5, 3, 0, 0)
+loadProfileButton.BackgroundColor3 = theme.bg2
+loadProfileButton.Text = "LOAD PROFILE"
+loadProfileButton.TextColor3 = theme.text
+loadProfileButton.TextSize = 10
+loadProfileButton.Font = Enum.Font.GothamBold
+loadProfileButton.BorderSizePixel = 0
+loadProfileButton.AutoButtonColor = false
+loadProfileButton.LayoutOrder = 117
+Instance.new("UICorner", loadProfileButton).CornerRadius = UDim.new(0, 7)
+createStroke(loadProfileButton, 1, theme.accent)
+
+viewBobbingToggleButton = makeOptBtn(settingsPanel.scroll, "View Bobbing: OFF", 118)
+setOptButtonState(viewBobbingToggleButton, false)
+viewBobbingToggleButton.btn.MouseButton1Click:Connect(function()
+	viewBobbingEnabled = not viewBobbingEnabled
+	viewBobbingToggleButton.btn.Text = viewBobbingEnabled and "View Bobbing: ON" or "View Bobbing: OFF"
+	profileDirty = true
+	updateStatus()
+end)
+
+makeAdjustRow("BOBBING INTENSITY", 119, function() return viewBobbingIntensity end, function(v)
+	viewBobbingIntensity = v
+	profileDirty = true
+	updateStatus()
+end, 0, 1, 0.01)
+
+makeAdjustRow("B&W BRIGHTNESS", 120, function() return bwBrightness end, function(v)
+	bwBrightness = v
+	if bwEnabled then
+		applyMode("bw")
+	end
+	profileDirty = true
+	updateStatus()
+end, -0.5, 0.5, 0.01)
+
+makeAdjustRow("B&W CONTRAST", 121, function() return bwContrast end, function(v)
+	bwContrast = v
+	if bwEnabled then
+		applyMode("bw")
+	end
+	profileDirty = true
+	updateStatus()
+end, -0.5, 0.5, 0.01)
+
+makeAdjustRow("PRESSURE INTENSITY", 122, function() return pressureIntensity end, function(v)
+	pressureIntensity = v
+	if pressureEnabled then
+		applyMode("pressure")
+	end
+	profileDirty = true
+	updateStatus()
+end, 0, 1, 0.01)
+
+saveProfileButton.MouseButton1Click:Connect(function()
+	saveProfile(profileNameBox.Text)
+	profileDirty = false
+	updateStatus()
+end)
+
+loadProfileButton.MouseButton1Click:Connect(function()
+	if loadProfile(profileNameBox.Text) then
+		updateStatus()
+	end
+end)
+
+for _, gui in ipairs(playerGui:GetChildren()) do
+	if gui:IsA("ScreenGui") and gui.Name == "ShaderPanel" then
+		-- nothing
+	end
+end
+
+for _, obj in ipairs(settingsPanel.scroll:GetDescendants()) do
+	if obj:IsA("TextButton") and obj ~= saveProfileButton and obj ~= loadProfileButton and obj ~= viewBobbingToggleButton.btn then
+		obj.MouseButton1Click:Connect(function()
+			task.defer(function()
+				profileDirty = true
+				updateStatus()
+			end)
+		end)
+	end
+end
+
+local function markDirtyLater()
+	task.defer(function()
+		profileDirty = true
+		updateStatus()
+	end)
+end
+
+btnVHS.btn.MouseButton1Click:Connect(markDirtyLater)
+btnAH.btn.MouseButton1Click:Connect(markDirtyLater)
+btnUR.btn.MouseButton1Click:Connect(markDirtyLater)
+btnUntitled.btn.MouseButton1Click:Connect(markDirtyLater)
+btnPressure.btn.MouseButton1Click:Connect(markDirtyLater)
+btnBW.btn.MouseButton1Click:Connect(markDirtyLater)
+btnCRT.btn.MouseButton1Click:Connect(markDirtyLater)
+btnNV.btn.MouseButton1Click:Connect(markDirtyLater)
+btnThermal.btn.MouseButton1Click:Connect(markDirtyLater)
+btnFF.btn.MouseButton1Click:Connect(markDirtyLater)
+btnFL.btn.MouseButton1Click:Connect(markDirtyLater)
+btnMB.btn.MouseButton1Click:Connect(markDirtyLater)
+btnHideUI.btn.MouseButton1Click:Connect(function()
+	task.defer(function()
+		setMainPanelVisible(true)
+		toggleGuiVisibility(guiHidden)
+		profileDirty = true
+		updateStatus()
+	end)
+end)
+btnToggle.btn.MouseButton1Click:Connect(markDirtyLater)
+
+local function tryLoadAutosave()
+	autoSaveReady = false
+	if loadProfile(autoProfileName) then
+		pendingProfileName = autoProfileName
+	end
+	autoSaveReady = true
+	profileDirty = false
+end
+
+tryLoadAutosave()
+applyLighting(currentMode)
+refreshEffectButtons()
+updateStatus()
