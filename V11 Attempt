@@ -1,0 +1,1096 @@
+-- ============================================================
+-- SHADER FX - Luna Interface Suite Edition
+-- Uses: https://github.com/Nebula-Softworks/Luna-Interface-Suite
+-- ============================================================
+
+-- SERVICES
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local camera = workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+
+math.randomseed(math.floor(os.clock() * 1000000))
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+local function clamp(v, minV, maxV)
+	return math.max(minV, math.min(maxV, v))
+end
+
+local function safeFindChild(parent, name)
+	return parent:FindFirstChild(name)
+end
+
+local function roundNumber(n, decimals)
+	local p = 10 ^ (decimals or 0)
+	return math.floor(n * p + 0.5) / p
+end
+
+local function detectDeviceMode()
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		return "Phone"
+	end
+	if UserInputService.TouchEnabled and UserInputService.KeyboardEnabled then
+		return "Tablet"
+	end
+	return "PC"
+end
+
+-- ============================================================
+-- STATE
+-- ============================================================
+local scriptEnabled = true
+local currentMode = "Normal"
+local vhsEnabled = false
+local analogEnabled = false
+local urEnabled = false
+local untitledEnabled = false
+local pressureEnabled = false
+local bwEnabled = false
+local crtEnabled = false
+local nightVisionEnabled = false
+local thermalEnabled = false
+local foundFootageEnabled = false
+local flashlightEnabled = false
+local motionBlurEnabled = false
+local viewBobbingEnabled = false
+local viewBobbingIntensity = 0.35
+local cameraShakeEnabled = false
+local bwBrightness = 0.12
+local bwContrast = 0.18
+local pressureIntensity = 1
+local shakeTime = 0
+local profileDirty = false
+local autoSaveReady = false
+local isLoadingProfile = false
+local autoProfileName = "autosave"
+local profileStorageFolder = "ShaderFX"
+local savedProfiles = {}
+
+local customAdjust = { saturation = 0, contrast = 0, brightness = 0, bloom = 0, exposure = 0 }
+local flSettings = { brightness = 5, heaviness = 0.2, color = Color3.fromRGB(255, 255, 255), blendColors = false, range = 60 }
+local mbSettings = { strength = 15, speed = 3 }
+local vhsSettings = { contrast = 0.85, saturation = -1.0, exposure = -0.25 }
+local ahSettings = { contrast = -0.10, saturation = -0.35, bloom = 1.2 }
+
+local modeConfigs = {
+	Normal = { saturation=-0.05, contrast=0.08, brightness=0, exposure=0, tint=Color3.fromRGB(255,255,255), bloomIntensity=0.12, bloomThreshold=0.92, bloomSize=8, overlays={} },
+	VHS = { saturation=-1.0, contrast=0.78, brightness=-0.06, exposure=-0.22, tint=Color3.fromRGB(255,255,255), bloomIntensity=0.10, bloomThreshold=0.95, bloomSize=6, overlays={vignette=true,scanlines=true,chroma=true,bars=true} },
+	analog = { saturation=-0.45, contrast=0.10, brightness=-0.03, exposure=0, tint=Color3.fromRGB(190,210,220), bloomIntensity=0.75, bloomThreshold=0.35, bloomSize=24, overlays={vignette=true,scanlines=true,chroma=true,bars=true} },
+	UR = { saturation=0.16, contrast=0.55, brightness=0.16, exposure=0.10, tint=Color3.fromRGB(245,245,255), bloomIntensity=1.40, bloomThreshold=0.78, bloomSize=26, overlays={} },
+	untitled = { saturation=0.12, contrast=0.34, brightness=0.04, exposure=0.08, tint=Color3.fromRGB(255,248,235), bloomIntensity=0.28, bloomThreshold=0.95, bloomSize=8, overlays={} },
+	pressure = { saturation=-0.60, contrast=0.48, brightness=-0.18, exposure=-1.15, tint=Color3.fromRGB(120,70,170), bloomIntensity=1.9, bloomThreshold=0.25, bloomSize=42, overlays={vignette=true,scanlines=true,pressure=true} },
+	bw = { saturation=-1.0, contrast=0.28, brightness=0.12, exposure=0.22, tint=Color3.fromRGB(255,255,255), bloomIntensity=0.20, bloomThreshold=0.88, bloomSize=12, overlays={vignette=true,bwGlow=true} },
+	crt = { saturation=-0.25, contrast=0.18, brightness=0.03, exposure=0, tint=Color3.fromRGB(230,255,230), bloomIntensity=0.24, bloomThreshold=0.90, bloomSize=10, overlays={vignette=true,scanlines=true,chroma=true,bars=true} },
+	nightVision = { saturation=-1.0, contrast=0.10, brightness=0.26, exposure=0.18, tint=Color3.fromRGB(140,255,140), bloomIntensity=0.85, bloomThreshold=0.68, bloomSize=18, overlays={vignette=true,scanlines=true} },
+	thermal = { saturation=0.48, contrast=0.28, brightness=0.10, exposure=0.05, tint=Color3.fromRGB(255,170,80), bloomIntensity=0.56, bloomThreshold=0.82, bloomSize=18, overlays={vignette=true} },
+	foundFootage = { saturation=-0.78, contrast=0.34, brightness=-0.05, exposure=-0.12, tint=Color3.fromRGB(245,245,245), bloomIntensity=0.12, bloomThreshold=0.95, bloomSize=8, overlays={vignette=true,scanlines=true} },
+}
+
+-- ============================================================
+-- EFFECT OVERLAYS (these stay as raw Roblox GUI - overlays are shader-internal)
+-- ============================================================
+local effectGui = Instance.new("ScreenGui")
+effectGui.Name = "ShaderOverlays"
+effectGui.IgnoreGuiInset = true
+effectGui.Enabled = false
+effectGui.ResetOnSpawn = false
+effectGui.DisplayOrder = 9998
+effectGui.Parent = playerGui
+
+local function makeOverlayFrame(parent, name, color, transparency, visible)
+	local f = Instance.new("Frame")
+	f.Name = name; f.Parent = parent
+	f.BackgroundColor3 = color; f.BackgroundTransparency = transparency
+	f.BorderSizePixel = 0; f.Visible = visible or false
+	return f
+end
+
+local vignetteTop = makeOverlayFrame(effectGui, "VignetteTop", Color3.new(0,0,0), 0.35)
+vignetteTop.Size = UDim2.new(1,0,0,40)
+
+local vignetteBottom = makeOverlayFrame(effectGui, "VignetteBottom", Color3.new(0,0,0), 0.35)
+vignetteBottom.Size = UDim2.new(1,0,0,48)
+vignetteBottom.Position = UDim2.new(0,0,1,-48)
+
+local vignetteLeft = makeOverlayFrame(effectGui, "VignetteLeft", Color3.new(0,0,0), 0.40)
+vignetteLeft.Size = UDim2.new(0,44,1,0)
+
+local vignetteRight = makeOverlayFrame(effectGui, "VignetteRight", Color3.new(0,0,0), 0.40)
+vignetteRight.Size = UDim2.new(0,44,1,0)
+vignetteRight.Position = UDim2.new(1,-44,0,0)
+
+local pressureTint = makeOverlayFrame(effectGui, "PressureTint", Color3.fromRGB(55,15,85), 0.68)
+pressureTint.Size = UDim2.new(1,0,1,0)
+
+local bwGlow = makeOverlayFrame(effectGui, "BWGlow", Color3.fromRGB(255,255,255), 0.95)
+bwGlow.Size = UDim2.new(1.25,0,1.25,0)
+bwGlow.Position = UDim2.new(-0.125,0,-0.125,0)
+Instance.new("UICorner", bwGlow).CornerRadius = UDim.new(1,0)
+local bwGlowGrad = Instance.new("UIGradient", bwGlow)
+bwGlowGrad.Rotation = 45
+bwGlowGrad.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0,1), NumberSequenceKeypoint.new(0.45,0.82),
+	NumberSequenceKeypoint.new(0.55,0.82), NumberSequenceKeypoint.new(1,1),
+})
+
+local chromaRed = makeOverlayFrame(effectGui, "ChromaRed", Color3.fromRGB(255,40,40), 0.96)
+chromaRed.Size = UDim2.new(1,0,1,0)
+local chromaBlue = makeOverlayFrame(effectGui, "ChromaBlue", Color3.fromRGB(80,140,255), 0.96)
+chromaBlue.Size = UDim2.new(1,0,1,0)
+
+local scanlineBars = {}
+for i = 1, 96 do
+	local bar = makeOverlayFrame(effectGui, "Scanline"..i, Color3.new(0,0,0), 0.88)
+	bar.Size = UDim2.new(1,0,0,1)
+	bar.ZIndex = 50
+	scanlineBars[i] = bar
+end
+
+local function setOverlayVisibility(name, visible)
+	if name == "vignette" then
+		vignetteTop.Visible = visible; vignetteBottom.Visible = visible
+		vignetteLeft.Visible = visible; vignetteRight.Visible = visible
+	elseif name == "pressure" then pressureTint.Visible = visible
+	elseif name == "bwGlow" then bwGlow.Visible = visible
+	elseif name == "chroma" then chromaRed.Visible = visible; chromaBlue.Visible = visible
+	elseif name == "bars" then for _, bar in ipairs(scanlineBars) do bar.Visible = visible end
+	end
+end
+
+local function hideAllOverlays()
+	vignetteTop.Visible = false; vignetteBottom.Visible = false
+	vignetteLeft.Visible = false; vignetteRight.Visible = false
+	pressureTint.Visible = false; bwGlow.Visible = false
+	chromaRed.Visible = false; chromaBlue.Visible = false
+	for _, bar in ipairs(scanlineBars) do bar.Visible = false end
+end
+
+-- ============================================================
+-- LIGHTING / FLASHLIGHT
+-- ============================================================
+local lightPart = Instance.new("Part")
+lightPart.Name = "ShaderFlashlightPart"
+lightPart.Parent = workspace
+lightPart.Transparency = 1
+lightPart.CanCollide = false
+lightPart.Anchored = true
+lightPart.Size = Vector3.new(1,1,1)
+lightPart.CastShadow = false
+
+local fl = Instance.new("SpotLight", lightPart)
+fl.Brightness = flSettings.brightness
+fl.Range = flSettings.range
+fl.Angle = 45
+fl.Enabled = false
+fl.Shadows = true
+fl.Color = flSettings.color
+
+local motionBlur = Instance.new("BlurEffect", Lighting)
+motionBlur.Name = "MotionBlur"
+motionBlur.Size = 0
+
+local function getEffects()
+	local cc = safeFindChild(Lighting, "MainCC") or Instance.new("ColorCorrectionEffect", Lighting)
+	cc.Name = "MainCC"
+	local bloom = safeFindChild(Lighting, "MainBloom") or Instance.new("BloomEffect", Lighting)
+	bloom.Name = "MainBloom"
+	return cc, bloom
+end
+
+local function applyFlSettings()
+	fl.Brightness = flSettings.brightness
+	fl.Range = flSettings.range
+	if flSettings.blendColors then
+		local a = Lighting.Ambient
+		fl.Color = Color3.new((flSettings.color.R+a.R)/2, (flSettings.color.G+a.G)/2, (flSettings.color.B+a.B)/2)
+	else
+		fl.Color = flSettings.color
+	end
+end
+
+local applyLighting
+local applyMode
+
+applyLighting = function(mode)
+	local cc, bloom = getEffects()
+	local cfg = modeConfigs[mode] or modeConfigs.Normal
+
+	effectGui.Enabled = mode ~= "Normal"
+	hideAllOverlays()
+	Lighting.Technology = Enum.Technology.ShadowMap
+
+	cc.Enabled = true; bloom.Enabled = true
+
+	local sat = cfg.saturation; local con = cfg.contrast
+	local bri = cfg.brightness; local exp = cfg.exposure
+	local bi = cfg.bloomIntensity; local bt = cfg.bloomThreshold; local bs = cfg.bloomSize
+
+	if mode == "VHS" then sat = vhsSettings.saturation; con = vhsSettings.contrast; exp = vhsSettings.exposure
+	elseif mode == "analog" then sat = ahSettings.saturation; con = ahSettings.contrast; bi = ahSettings.bloom
+	elseif mode == "pressure" then
+		pressureTint.Visible = true
+		pressureTint.BackgroundColor3 = Color3.fromRGB(55,10,10)
+		pressureTint.BackgroundTransparency = 0.75-(pressureIntensity*0.06)
+		cc.TintColor = Color3.fromRGB(140,35,35)
+		cc.Saturation = -0.75; cc.Contrast = 0.62+(pressureIntensity*0.10)
+		cc.Brightness = -0.20-(pressureIntensity*0.07)
+		Lighting.ExposureCompensation = -0.90-(pressureIntensity*0.12)
+		bloom.Intensity = 0.85+(pressureIntensity*0.15)
+		bwGlow.Visible = false; return
+	elseif mode == "bw" then
+		bwGlow.Visible = true
+		bwGlow.BackgroundTransparency = 0.95-(bwBrightness*0.02)
+		cc.TintColor = Color3.fromRGB(255,255,255)
+		cc.Saturation = -1; cc.Contrast = 0.95+bwContrast
+		cc.Brightness = 0.18+bwBrightness
+		Lighting.ExposureCompensation = 0.12; bloom.Intensity = 0.10; return
+	end
+
+	cc.TintColor = cfg.tint
+	cc.Saturation = clamp(sat + customAdjust.saturation, -1, 1)
+	cc.Contrast = clamp(con + customAdjust.contrast, -1, 1)
+	cc.Brightness = clamp(bri + customAdjust.brightness, -1, 1)
+	Lighting.ExposureCompensation = clamp(exp + customAdjust.exposure, -5, 5)
+	bloom.Intensity = math.max(0, bi + customAdjust.bloom)
+	bloom.Threshold = clamp(bt, 0, 1)
+	bloom.Size = math.max(0, bs)
+
+	for overlayName, isVisible in pairs(cfg.overlays or {}) do
+		setOverlayVisibility(overlayName, isVisible)
+	end
+
+	if mode == "Normal" then
+		effectGui.Enabled = false; cc.Enabled = false; bloom.Enabled = false
+		Lighting.ExposureCompensation = 0; hideAllOverlays()
+	end
+end
+
+applyMode = function(mode)
+	currentMode = mode
+	vhsEnabled = (mode=="VHS"); analogEnabled = (mode=="analog"); urEnabled = (mode=="UR")
+	untitledEnabled = (mode=="untitled"); pressureEnabled = (mode=="pressure"); bwEnabled = (mode=="bw")
+	crtEnabled = (mode=="crt"); nightVisionEnabled = (mode=="nightVision"); thermalEnabled = (mode=="thermal")
+	foundFootageEnabled = (mode=="foundFootage")
+	applyLighting(mode)
+end
+
+-- ============================================================
+-- GUI HIDE FUNCTION
+-- Sets transparency of ALL non-shader GUI to 1 (does not delete)
+-- Covers: ScreenGui, GuiObjects, SurfaceGui, Highlights, UIStroke
+-- Ignores: CoreGui, ShaderPanel, ShaderOverlays, ShaderControl
+-- ============================================================
+local hiddenSnapshots = {}
+local shaderGuiNames = { ShaderPanel = true, ShaderOverlays = true, ShaderControl = true }
+
+local function isShaderGui(obj)
+	if not obj then return false end
+	-- Walk up to find the ScreenGui root
+	local current = obj
+	while current and current ~= playerGui and current ~= workspace do
+		if shaderGuiNames[current.Name] then return true end
+		current = current.Parent
+	end
+	return false
+end
+
+local function toggleGuiVisibility(hide)
+	local roots = { playerGui, workspace }
+	if hide then
+		for _, root in ipairs(roots) do
+			for _, obj in ipairs(root:GetDescendants()) do
+				if isShaderGui(obj) then continue end
+				if obj:IsA("ScreenGui") then
+					hiddenSnapshots[obj] = hiddenSnapshots[obj] or { enabled = obj.Enabled }
+					obj.Enabled = false
+				elseif obj:IsA("SurfaceGui") then
+					hiddenSnapshots[obj] = hiddenSnapshots[obj] or { enabled = obj.Enabled }
+					obj.Enabled = false
+				elseif obj:IsA("Highlight") then
+					hiddenSnapshots[obj] = hiddenSnapshots[obj] or { fill = obj.FillTransparency, outline = obj.OutlineTransparency }
+					obj.FillTransparency = 1; obj.OutlineTransparency = 1
+				elseif obj:IsA("GuiObject") then
+					hiddenSnapshots[obj] = hiddenSnapshots[obj] or {
+						bg = obj.BackgroundTransparency,
+						txt = (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) and obj.TextTransparency or nil,
+						img = (obj:IsA("ImageLabel") or obj:IsA("ImageButton")) and obj.ImageTransparency or nil,
+					}
+					obj.BackgroundTransparency = 1
+					if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then obj.TextTransparency = 1 end
+					if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then obj.ImageTransparency = 1 end
+				elseif obj:IsA("UIStroke") then
+					hiddenSnapshots[obj] = hiddenSnapshots[obj] or { thickness = obj.Thickness }
+					obj.Thickness = 0
+				end
+			end
+		end
+	else
+		for obj, data in pairs(hiddenSnapshots) do
+			if obj and obj.Parent then
+				if obj:IsA("UIStroke") then obj.Thickness = data.thickness or obj.Thickness
+				elseif obj:IsA("ScreenGui") or obj:IsA("SurfaceGui") then obj.Enabled = data.enabled ~= false
+				elseif obj:IsA("Highlight") then
+					obj.FillTransparency = data.fill or obj.FillTransparency
+					obj.OutlineTransparency = data.outline or obj.OutlineTransparency
+				else
+					obj.BackgroundTransparency = data.bg or obj.BackgroundTransparency
+					if data.txt ~= nil then obj.TextTransparency = data.txt end
+					if data.img ~= nil then obj.ImageTransparency = data.img end
+				end
+			end
+		end
+		hiddenSnapshots = {}
+	end
+end
+
+-- ============================================================
+-- VIEW BOBBING
+-- ============================================================
+local function getWalkShake(dt)
+	if not viewBobbingEnabled then return CFrame.new() end
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not rootPart then return CFrame.new() end
+	local vel = rootPart.AssemblyLinearVelocity
+	local speed = Vector3.new(vel.X,0,vel.Z).Magnitude
+	local moving = speed > 0.8 and humanoid.FloorMaterial ~= Enum.Material.Air
+	shakeTime = shakeTime + dt * (moving and (7+speed*0.18) or 1.8)
+	local bobAmp = clamp(viewBobbingIntensity,0,1)
+	if not moving then
+		return CFrame.new(math.sin(shakeTime*0.8)*(0.006+bobAmp*0.004), math.sin(shakeTime*1.15)*(0.010+bobAmp*0.010), 0)
+	end
+	local amp = bobAmp * 0.012
+	return CFrame.new(math.sin(shakeTime*6.3)*(0.010+amp), -math.abs(math.sin(shakeTime*9.0))*(0.016+amp*1.7), math.sin(shakeTime*4.2)*(0.008+amp*0.8))
+		* CFrame.Angles(0, 0, math.sin(shakeTime*5.0)*math.rad(0.25+(amp*55)))
+end
+
+-- ============================================================
+-- PROFILE SAVE / LOAD
+-- ============================================================
+local function sanitizeProfileName(name)
+	name = tostring(name or ""):gsub("^%s+",""):gsub("%s+$",""):gsub("[^%w%-%_ ]","_")
+	return name == "" and autoProfileName or name
+end
+
+local function buildProfileData()
+	return {
+		version=1, currentMode=currentMode, scriptEnabled=scriptEnabled,
+		viewBobbingEnabled=viewBobbingEnabled, viewBobbingIntensity=viewBobbingIntensity,
+		bwBrightness=bwBrightness, bwContrast=bwContrast, pressureIntensity=pressureIntensity,
+		flashlightEnabled=flashlightEnabled, motionBlurEnabled=motionBlurEnabled,
+		flSettings={ brightness=flSettings.brightness, heaviness=flSettings.heaviness, range=flSettings.range,
+			blendColors=flSettings.blendColors, color={R=flSettings.color.R,G=flSettings.color.G,B=flSettings.color.B} },
+		mbSettings={strength=mbSettings.strength, speed=mbSettings.speed},
+		vhsSettings={contrast=vhsSettings.contrast, saturation=vhsSettings.saturation, exposure=vhsSettings.exposure},
+		ahSettings={contrast=ahSettings.contrast, saturation=ahSettings.saturation, bloom=ahSettings.bloom},
+		customAdjust={saturation=customAdjust.saturation, contrast=customAdjust.contrast,
+			brightness=customAdjust.brightness, bloom=customAdjust.bloom, exposure=customAdjust.exposure},
+	}
+end
+
+local function saveProfile(profileName)
+	profileName = sanitizeProfileName(profileName)
+	local json = HttpService:JSONEncode(buildProfileData())
+	if type(writefile)=="function" and type(isfolder)=="function" and type(makefolder)=="function" then
+		pcall(function()
+			if not isfolder(profileStorageFolder) then makefolder(profileStorageFolder) end
+			writefile(profileStorageFolder.."/"..profileName..".json", json)
+		end)
+	else
+		savedProfiles[profileName] = json
+	end
+end
+
+local function loadProfile(profileName)
+	profileName = sanitizeProfileName(profileName)
+	local json
+	if type(readfile)=="function" and type(isfile)=="function" then
+		local ok, result = pcall(function()
+			if isfile(profileStorageFolder.."/"..profileName..".json") then
+				return readfile(profileStorageFolder.."/"..profileName..".json")
+			end
+		end)
+		if ok then json = result end
+	end
+	json = json or savedProfiles[profileName]
+	if not json then return false end
+	local ok, data = pcall(function() return HttpService:JSONDecode(json) end)
+	if not ok or type(data)~="table" then return false end
+	isLoadingProfile = true
+	currentMode = data.currentMode or "Normal"
+	scriptEnabled = data.scriptEnabled ~= false
+	viewBobbingEnabled = data.viewBobbingEnabled == true
+	viewBobbingIntensity = tonumber(data.viewBobbingIntensity) or viewBobbingIntensity
+	bwBrightness = tonumber(data.bwBrightness) or bwBrightness
+	bwContrast = tonumber(data.bwContrast) or bwContrast
+	pressureIntensity = tonumber(data.pressureIntensity) or pressureIntensity
+	flashlightEnabled = data.flashlightEnabled == true
+	motionBlurEnabled = data.motionBlurEnabled == true
+	if type(data.customAdjust)=="table" then
+		for k,v in pairs(data.customAdjust) do customAdjust[k] = tonumber(v) or customAdjust[k] end
+	end
+	if type(data.flSettings)=="table" then
+		flSettings.brightness = tonumber(data.flSettings.brightness) or flSettings.brightness
+		flSettings.heaviness = tonumber(data.flSettings.heaviness) or flSettings.heaviness
+		flSettings.range = tonumber(data.flSettings.range) or flSettings.range
+		flSettings.blendColors = data.flSettings.blendColors == true
+		if type(data.flSettings.color)=="table" then
+			flSettings.color = Color3.fromRGB(
+				clamp(tonumber(data.flSettings.color.R) or 255,0,255),
+				clamp(tonumber(data.flSettings.color.G) or 255,0,255),
+				clamp(tonumber(data.flSettings.color.B) or 255,0,255))
+		end
+	end
+	if type(data.mbSettings)=="table" then
+		mbSettings.strength = tonumber(data.mbSettings.strength) or mbSettings.strength
+		mbSettings.speed = tonumber(data.mbSettings.speed) or mbSettings.speed
+	end
+	if type(data.vhsSettings)=="table" then
+		vhsSettings.contrast = tonumber(data.vhsSettings.contrast) or vhsSettings.contrast
+		vhsSettings.saturation = tonumber(data.vhsSettings.saturation) or vhsSettings.saturation
+		vhsSettings.exposure = tonumber(data.vhsSettings.exposure) or vhsSettings.exposure
+	end
+	if type(data.ahSettings)=="table" then
+		ahSettings.contrast = tonumber(data.ahSettings.contrast) or ahSettings.contrast
+		ahSettings.saturation = tonumber(data.ahSettings.saturation) or ahSettings.saturation
+		ahSettings.bloom = tonumber(data.ahSettings.bloom) or ahSettings.bloom
+	end
+	applyFlSettings()
+	applyMode(currentMode)
+	fl.Enabled = flashlightEnabled
+	if not motionBlurEnabled then motionBlur.Size = 0 end
+	isLoadingProfile = false; profileDirty = false
+	return true
+end
+
+-- ============================================================
+-- LUNA UI LIBRARY
+-- ============================================================
+local Luna = loadstring(game:HttpGet("https://raw.githubusercontent.com/Nebula-Softworks/Luna-Interface-Suite/refs/heads/master/source.lua", true))()
+
+local Window = Luna:CreateWindow({
+	Name = "Shader FX",
+	Subtitle = "Visual Enhancement Suite",
+	LogoID = nil,
+	LoadingEnabled = true,
+	LoadingTitle = "Shader FX",
+	LoadingSubtitle = "Loading visual suite...",
+	ConfigSet = "ShaderFXConfig",
+	RootFolder = nil,
+})
+
+-- ============================================================
+-- TAB: SHADER MODES
+-- ============================================================
+local ModesTab = Window:CreateTab({ Name = "Shader Modes", Icon = "rbxassetid://7733960981" })
+
+ModesTab:CreateSection("Film / Analog")
+
+-- VHS Toggle
+local vhsToggle = ModesTab:CreateToggle({
+	Name = "VHS",
+	CurrentValue = false,
+	Flag = "VHSEnabled",
+	Callback = function(val)
+		if val then applyMode("VHS") else applyMode("Normal") end
+		vhsEnabled = val
+	end,
+})
+
+-- Analog Horror Toggle
+local ahToggle = ModesTab:CreateToggle({
+	Name = "Analog Horror",
+	CurrentValue = false,
+	Flag = "AHEnabled",
+	Callback = function(val)
+		if val then applyMode("analog") else applyMode("Normal") end
+		analogEnabled = val
+	end,
+})
+
+-- Found Footage Toggle
+local ffToggle = ModesTab:CreateToggle({
+	Name = "Found Footage",
+	CurrentValue = false,
+	Flag = "FFEnabled",
+	Callback = function(val)
+		if val then applyMode("foundFootage") else applyMode("Normal") end
+		foundFootageEnabled = val
+	end,
+})
+
+ModesTab:CreateSection("Cinematic")
+
+local urToggle = ModesTab:CreateToggle({
+	Name = "Ultra Real",
+	CurrentValue = false,
+	Flag = "UREnabled",
+	Callback = function(val)
+		if val then applyMode("UR") else applyMode("Normal") end
+		urEnabled = val
+	end,
+})
+
+local untitledToggle = ModesTab:CreateToggle({
+	Name = "Untitled",
+	CurrentValue = false,
+	Flag = "UntitledEnabled",
+	Callback = function(val)
+		if val then applyMode("untitled") else applyMode("Normal") end
+		untitledEnabled = val
+	end,
+})
+
+local bwToggle = ModesTab:CreateToggle({
+	Name = "Black & White",
+	CurrentValue = false,
+	Flag = "BWEnabled",
+	Callback = function(val)
+		if val then applyMode("bw") else applyMode("Normal") end
+		bwEnabled = val
+	end,
+})
+
+ModesTab:CreateSection("Stylized")
+
+local pressureToggle = ModesTab:CreateToggle({
+	Name = "Pressure",
+	CurrentValue = false,
+	Flag = "PressureEnabled",
+	Callback = function(val)
+		if val then applyMode("pressure") else applyMode("Normal") end
+		pressureEnabled = val
+	end,
+})
+
+local crtToggle = ModesTab:CreateToggle({
+	Name = "CRT",
+	CurrentValue = false,
+	Flag = "CRTEnabled",
+	Callback = function(val)
+		if val then applyMode("crt") else applyMode("Normal") end
+		crtEnabled = val
+	end,
+})
+
+local nvToggle = ModesTab:CreateToggle({
+	Name = "Night Vision",
+	CurrentValue = false,
+	Flag = "NVEnabled",
+	Callback = function(val)
+		if val then applyMode("nightVision") else applyMode("Normal") end
+		nightVisionEnabled = val
+	end,
+})
+
+local thermalToggle = ModesTab:CreateToggle({
+	Name = "Thermal",
+	CurrentValue = false,
+	Flag = "ThermalEnabled",
+	Callback = function(val)
+		if val then applyMode("thermal") else applyMode("Normal") end
+		thermalEnabled = val
+	end,
+})
+
+ModesTab:CreateButton({
+	Name = "Reset to Normal",
+	Callback = function()
+		applyMode("Normal")
+		vhsEnabled=false; analogEnabled=false; urEnabled=false; untitledEnabled=false
+		pressureEnabled=false; bwEnabled=false; crtEnabled=false; nightVisionEnabled=false
+		thermalEnabled=false; foundFootageEnabled=false
+		-- Reset toggle visuals via flag (Luna handles this through flags)
+		Luna.Flags["VHSEnabled"].Value = false
+		Luna.Flags["AHEnabled"].Value = false
+		Luna.Flags["UREnabled"].Value = false
+		Luna.Flags["UntitledEnabled"].Value = false
+		Luna.Flags["PressureEnabled"].Value = false
+		Luna.Flags["BWEnabled"].Value = false
+		Luna.Flags["CRTEnabled"].Value = false
+		Luna.Flags["NVEnabled"].Value = false
+		Luna.Flags["ThermalEnabled"].Value = false
+		Luna.Flags["FFEnabled"].Value = false
+	end,
+})
+
+-- ============================================================
+-- TAB: VHS SETTINGS
+-- ============================================================
+local VHSTab = Window:CreateTab({ Name = "VHS Settings", Icon = "rbxassetid://7733960981" })
+
+VHSTab:CreateSection("VHS Parameters")
+
+VHSTab:CreateSlider({
+	Name = "Contrast",
+	Range = {0.10, 1.00},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = vhsSettings.contrast,
+	Flag = "VHSContrast",
+	Callback = function(val)
+		vhsSettings.contrast = val
+		if vhsEnabled then applyMode("VHS") end
+	end,
+})
+
+VHSTab:CreateSlider({
+	Name = "Saturation",
+	Range = {-1.0, -0.3},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = vhsSettings.saturation,
+	Flag = "VHSSaturation",
+	Callback = function(val)
+		vhsSettings.saturation = val
+		if vhsEnabled then applyMode("VHS") end
+	end,
+})
+
+VHSTab:CreateSlider({
+	Name = "Exposure",
+	Range = {-0.80, 0},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = vhsSettings.exposure,
+	Flag = "VHSExposure",
+	Callback = function(val)
+		vhsSettings.exposure = val
+		if vhsEnabled then applyMode("VHS") end
+	end,
+})
+
+VHSTab:CreateSection("Analog Horror Parameters")
+
+VHSTab:CreateSlider({
+	Name = "AH Contrast",
+	Range = {-0.30, 0.30},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = ahSettings.contrast,
+	Flag = "AHContrast",
+	Callback = function(val)
+		ahSettings.contrast = val
+		if analogEnabled then applyMode("analog") end
+	end,
+})
+
+VHSTab:CreateSlider({
+	Name = "AH Saturation",
+	Range = {-1.0, 0},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = ahSettings.saturation,
+	Flag = "AHSaturation",
+	Callback = function(val)
+		ahSettings.saturation = val
+		if analogEnabled then applyMode("analog") end
+	end,
+})
+
+VHSTab:CreateSlider({
+	Name = "AH Bloom",
+	Range = {0.2, 4.0},
+	Increment = 0.1,
+	Suffix = "",
+	CurrentValue = ahSettings.bloom,
+	Flag = "AHBloom",
+	Callback = function(val)
+		ahSettings.bloom = val
+		if analogEnabled then applyMode("analog") end
+	end,
+})
+
+-- ============================================================
+-- TAB: TOOLS
+-- ============================================================
+local ToolsTab = Window:CreateTab({ Name = "Tools", Icon = "rbxassetid://7733960981" })
+
+ToolsTab:CreateSection("Flashlight")
+
+ToolsTab:CreateToggle({
+	Name = "Enable Flashlight",
+	CurrentValue = false,
+	Flag = "FLEnabled",
+	Callback = function(val)
+		flashlightEnabled = val
+		fl.Enabled = val
+		if val then applyFlSettings() end
+	end,
+})
+
+ToolsTab:CreateSlider({
+	Name = "Brightness",
+	Range = {1, 10},
+	Increment = 0.5,
+	Suffix = "",
+	CurrentValue = flSettings.brightness,
+	Flag = "FLBrightness",
+	Callback = function(val)
+		flSettings.brightness = val
+		applyFlSettings()
+	end,
+})
+
+ToolsTab:CreateSlider({
+	Name = "Range",
+	Range = {20, 150},
+	Increment = 5,
+	Suffix = "",
+	CurrentValue = flSettings.range,
+	Flag = "FLRange",
+	Callback = function(val)
+		flSettings.range = val
+		applyFlSettings()
+	end,
+})
+
+ToolsTab:CreateSlider({
+	Name = "Lag / Heaviness",
+	Range = {0.02, 0.90},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = flSettings.heaviness,
+	Flag = "FLHeaviness",
+	Callback = function(val)
+		flSettings.heaviness = val
+	end,
+})
+
+ToolsTab:CreateToggle({
+	Name = "Blend Ambient Colors",
+	CurrentValue = false,
+	Flag = "FLBlend",
+	Callback = function(val)
+		flSettings.blendColors = val
+		applyFlSettings()
+	end,
+})
+
+ToolsTab:CreateSection("Motion Blur")
+
+ToolsTab:CreateToggle({
+	Name = "Enable Motion Blur",
+	CurrentValue = false,
+	Flag = "MBEnabled",
+	Callback = function(val)
+		motionBlurEnabled = val
+		if not val then motionBlur.Size = 0 end
+	end,
+})
+
+ToolsTab:CreateSlider({
+	Name = "Blur Strength",
+	Range = {1, 30},
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = mbSettings.strength,
+	Flag = "MBStrength",
+	Callback = function(val)
+		mbSettings.strength = val
+	end,
+})
+
+ToolsTab:CreateSlider({
+	Name = "Triggers At Speed",
+	Range = {1, 10},
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = mbSettings.speed,
+	Flag = "MBSpeed",
+	Callback = function(val)
+		mbSettings.speed = val
+	end,
+})
+
+ToolsTab:CreateSection("GUI Visibility")
+
+-- "Hide UI" button: sets transparency of ALL game GUI to 1 (not deleted)
+local guiHidden = false
+ToolsTab:CreateButton({
+	Name = "Toggle Hide UI (Transparency)",
+	Callback = function()
+		guiHidden = not guiHidden
+		toggleGuiVisibility(guiHidden)
+	end,
+})
+
+-- ============================================================
+-- TAB: SETTINGS
+-- ============================================================
+local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = "rbxassetid://7733960981" })
+
+SettingsTab:CreateSection("Global Color Adjustments")
+
+SettingsTab:CreateSlider({
+	Name = "Saturation",
+	Range = {-1, 1},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = 0,
+	Flag = "GlobalSat",
+	Callback = function(val)
+		customAdjust.saturation = val
+		if currentMode ~= "Normal" then applyMode(currentMode) end
+	end,
+})
+
+SettingsTab:CreateSlider({
+	Name = "Contrast",
+	Range = {-1, 1},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = 0,
+	Flag = "GlobalCon",
+	Callback = function(val)
+		customAdjust.contrast = val
+		if currentMode ~= "Normal" then applyMode(currentMode) end
+	end,
+})
+
+SettingsTab:CreateSlider({
+	Name = "Brightness",
+	Range = {-1, 1},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = 0,
+	Flag = "GlobalBri",
+	Callback = function(val)
+		customAdjust.brightness = val
+		if currentMode ~= "Normal" then applyMode(currentMode) end
+	end,
+})
+
+SettingsTab:CreateSlider({
+	Name = "Bloom",
+	Range = {-1, 2},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = 0,
+	Flag = "GlobalBloom",
+	Callback = function(val)
+		customAdjust.bloom = val
+		if currentMode ~= "Normal" then applyMode(currentMode) end
+	end,
+})
+
+SettingsTab:CreateSlider({
+	Name = "Exposure",
+	Range = {-1, 1},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = 0,
+	Flag = "GlobalExp",
+	Callback = function(val)
+		customAdjust.exposure = val
+		if currentMode ~= "Normal" then applyMode(currentMode) end
+	end,
+})
+
+SettingsTab:CreateSection("View Bobbing")
+
+SettingsTab:CreateToggle({
+	Name = "Enable View Bobbing",
+	CurrentValue = false,
+	Flag = "VBEnabled",
+	Callback = function(val)
+		viewBobbingEnabled = val
+		cameraShakeEnabled = val
+	end,
+})
+
+SettingsTab:CreateSlider({
+	Name = "Bobbing Intensity",
+	Range = {0, 1},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = 0.35,
+	Flag = "VBIntensity",
+	Callback = function(val)
+		viewBobbingIntensity = val
+	end,
+})
+
+SettingsTab:CreateSection("B&W / Pressure Fine Tune")
+
+SettingsTab:CreateSlider({
+	Name = "B&W Brightness",
+	Range = {-0.5, 0.5},
+	Increment = 0.01,
+	Suffix = "",
+	CurrentValue = bwBrightness,
+	Flag = "BWBrightness",
+	Callback = function(val)
+		bwBrightness = val
+		if bwEnabled then applyMode("bw") end
+	end,
+})
+
+SettingsTab:CreateSlider({
+	Name = "B&W Contrast",
+	Range = {-0.5, 0.5},
+	Increment = 0.01,
+	Suffix = "",
+	CurrentValue = bwContrast,
+	Flag = "BWContrast",
+	Callback = function(val)
+		bwContrast = val
+		if bwEnabled then applyMode("bw") end
+	end,
+})
+
+SettingsTab:CreateSlider({
+	Name = "Pressure Intensity",
+	Range = {0, 1},
+	Increment = 0.01,
+	Suffix = "",
+	CurrentValue = pressureIntensity,
+	Flag = "PressureIntensity",
+	Callback = function(val)
+		pressureIntensity = val
+		if pressureEnabled then applyMode("pressure") end
+	end,
+})
+
+SettingsTab:CreateSection("Profiles")
+
+local profileNameInput = ""
+SettingsTab:CreateTextbox({
+	Name = "Profile Name",
+	Default = "autosave",
+	TextDisappear = false,
+	Flag = "ProfileName",
+	Callback = function(val)
+		profileNameInput = val
+	end,
+})
+
+SettingsTab:CreateButton({
+	Name = "Save Profile",
+	Callback = function()
+		local name = profileNameInput ~= "" and profileNameInput or autoProfileName
+		saveProfile(name)
+	end,
+})
+
+SettingsTab:CreateButton({
+	Name = "Load Profile",
+	Callback = function()
+		local name = profileNameInput ~= "" and profileNameInput or autoProfileName
+		loadProfile(name)
+	end,
+})
+
+SettingsTab:CreateSection("Master")
+
+SettingsTab:CreateToggle({
+	Name = "Script Enabled",
+	CurrentValue = true,
+	Flag = "ScriptEnabled",
+	Callback = function(val)
+		scriptEnabled = val
+		if not val then
+			applyMode("Normal")
+			flashlightEnabled = false; fl.Enabled = false
+			motionBlurEnabled = false; motionBlur.Size = 0
+		end
+	end,
+})
+
+-- Config section must be last
+SettingsTab:BuildConfigSection()
+
+-- ============================================================
+-- RENDER LOOP
+-- ============================================================
+local prevCamCF = camera.CFrame
+local smoothFlCFrame = CFrame.new()
+local scanlineTimer = 0
+
+local function refreshScanlines()
+	local viewport = (camera and camera.ViewportSize) or Vector2.new(1280,720)
+	local spacing = math.max(4, math.floor(viewport.Y / #scanlineBars))
+	local offset = math.floor((tick()*20) % spacing)
+	for i, bar in ipairs(scanlineBars) do
+		bar.Size = UDim2.new(1,0,0,1)
+		bar.Position = UDim2.new(0,0,0, ((i-1)*spacing+offset) % viewport.Y)
+	end
+end
+
+RunService.RenderStepped:Connect(function(dt)
+	if not scriptEnabled then return end
+
+	-- Scanlines animation
+	if effectGui.Enabled then
+		scanlineTimer = scanlineTimer + dt
+		if scanlineTimer >= 0.033 then
+			scanlineTimer = 0
+			refreshScanlines()
+		end
+		-- Chroma aberration drift
+		if chromaRed.Visible then
+			local t = tick()
+			chromaRed.Position = UDim2.new(0, math.sin(t*0.7)*2, 0, 0)
+			chromaBlue.Position = UDim2.new(0, math.cos(t*0.5)*(-2), 0, 0)
+		end
+	end
+
+	-- Motion blur
+	if motionBlurEnabled then
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+		if rootPart then
+			local vel = rootPart.AssemblyLinearVelocity
+			local speed = Vector3.new(vel.X,0,vel.Z).Magnitude
+			motionBlur.Size = speed >= mbSettings.speed and mbSettings.strength or 0
+		end
+	end
+
+	-- Flashlight follow camera
+	if flashlightEnabled and camera then
+		local targetCF = camera.CFrame
+		smoothFlCFrame = smoothFlCFrame:Lerp(targetCF, 1 - flSettings.heaviness)
+		lightPart.CFrame = smoothFlCFrame
+	end
+
+	-- View bobbing
+	if viewBobbingEnabled and camera then
+		local shake = getWalkShake(dt)
+		camera.CFrame = camera.CFrame * shake
+	end
+end)
+
+player.CharacterAdded:Connect(function(newCharacter)
+	character = newCharacter
+end)
+
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	camera = workspace.CurrentCamera or camera
+end)
+
+-- ============================================================
+-- INIT
+-- ============================================================
+applyFlSettings()
+applyMode("Normal")
+
+local ok = loadProfile(autoProfileName)
+if not ok then
+	autoSaveReady = true
+end
+
+-- auto-save on change
+RunService.Heartbeat:Connect(function()
+	if autoSaveReady and profileDirty and not isLoadingProfile then
+		saveProfile(autoProfileName)
+		profileDirty = false
+	end
+end)
